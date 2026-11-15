@@ -31,6 +31,18 @@ def jsonable(value):
     return str(value)
 
 
+def parse_params(items):
+    """--param KEY=VALUE entries (VALUE is YAML) to a dict; dict values merge in upstream.load."""
+    import yaml
+    params = {}
+    for item in items or ():
+        key,sep,value = item.partition("=")
+        if not sep or not key.strip():
+            raise ValueError(f"--param expects KEY=VALUE, got {item!r}")
+        params[key.strip()] = yaml.safe_load(value)
+    return params
+
+
 def write_json(path, data):
     Path(path).write_text(json.dumps(jsonable(data),indent=2,allow_nan=False)+"\n")
 
@@ -133,7 +145,9 @@ def run(args):
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     np.random.seed(args.seed)
     init_start = time.perf_counter()
-    cfg,world,starts = upstream.load(args.scenario,args.controller,args.drones)
+    params = parse_params(getattr(args,"param",None))
+    cfg,world,starts = upstream.load(args.scenario,args.controller,args.drones,
+                                     params,out/"scenario_overlay")
     issues = cfg.validate_config()
     for level,message in issues:
         if level != "INFO":
@@ -201,6 +215,7 @@ def run(args):
                          physics_dt=args.physics_dt,planning_period=cfg.TIMESTEP,
                          scheduling=args.scheduling,command_execution=execution,
                          compute_ratio=ratio,
+                         param_overrides=params or None,
                          attitude_guard=guard_settings(guard_mode),
                          speed_guard=speed_guard,
                          plan_tracking=dict(kp=upstream.TRACK_KP,kd=upstream.TRACK_KD,

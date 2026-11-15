@@ -64,3 +64,39 @@ def test_estimator_interval_preserves_state_and_noise_density():
     assert tracker.F[0,2]==.3
     assert tracker.Q[2,2]==pytest.approx(4*.3**2)
     np.testing.assert_array_equal(tracker.x,[3,4,0,0])
+
+
+def test_parse_params_and_config_default():
+    from uav3d.experiment import parse_params
+    from uav3d.upstream import config_default
+    assert parse_params(["VMAX=9","IPOPT_OPTIONS={ipopt.max_iter: 100}"]) == \
+        {"VMAX":9,"IPOPT_OPTIONS":{"ipopt.max_iter":100}}
+    import pytest
+    with pytest.raises(ValueError):
+        parse_params(["VMAX"])
+    assert config_default("IPOPT_OPTIONS")["ipopt.max_iter"] == 500
+
+
+def test_scenario_overlay_merges_without_touching_upstream(tmp_path):
+    import subprocess, sys, yaml
+    from uav3d.upstream import overlay_scenario, scenario_file
+    source = scenario_file("scen1")
+    before = source.read_text()
+    path,merged = overlay_scenario("scen1",{"IPOPT_OPTIONS":{"ipopt.max_iter":100},"VMAX":9},tmp_path)
+    assert source.read_text() == before and path.name == source.name
+    data = yaml.safe_load(path.read_text())
+    assert data["params"]["VMAX"] == 9 and data["params"]["UMAX"] == 5     # scenario params kept
+    assert merged["IPOPT_OPTIONS"]["ipopt.max_iter"] == 100
+    assert merged["IPOPT_OPTIONS"]["ipopt.tol"] == 1e-4                     # merged with default
+    # Upstream loads the overlay and recomputes derived parameters from it.
+    code = ("from uav3d import upstream;"
+            "cfg,_,_=upstream.load('scen1','ours',None,"
+            "{'IPOPT_OPTIONS':{'ipopt.max_iter':100},'VMAX':9},%r);"
+            "print(cfg.SCENARIO_NAME,cfg.VMAX,cfg.IPOPT_OPTIONS['ipopt.max_iter'],cfg.CORRIDOR_MARGIN)"
+            % str(tmp_path/"run"))
+    out = subprocess.run([sys.executable,"-c",code],capture_output=True,text=True,check=True).stdout.split()
+    assert out[:3] == ["scen1","9","100"]
+    base = subprocess.run([sys.executable,"-c","from uav3d import upstream;"
+                           "cfg,_,_=upstream.load('scen1');print(cfg.CORRIDOR_MARGIN)"],
+                          capture_output=True,text=True,check=True).stdout.split()
+    assert float(out[3]) < float(base[0])        # derived from VMAX, so it follows the override

@@ -10,15 +10,79 @@ ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = Path(os.environ.get("UAV3D_UPSTREAM", ROOT / "motion_planning_MPC"))
 
 
-def load(scenario="scen1", controller="ours", drones=None):
+def scenario_file(scenario):
+    """The upstream scenario YAML, resolved like upstream's config.scenario_path."""
+    for name in (f"scen{scenario}.yaml",f"{scenario}.yaml",str(scenario)):
+        path = Path(name) if os.path.isabs(name) else UPSTREAM/"scenarios"/name
+        if path.is_file():
+            return path
+    raise ValueError(f"Scenario {scenario!r} not found under {UPSTREAM/'scenarios'}")
+
+
+def config_default(name):
+    """A module-level literal default from upstream config.py, read without importing it."""
+    import ast
+    tree = ast.parse((UPSTREAM/"config.py").read_text())
+    for node in tree.body:
+        if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id == name
+                                               for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise KeyError(name)
+
+
+def overlay_scenario(scenario, params, directory):
+    """Write a copy of the upstream scenario with extra 'params' into directory.
+
+    Upstream applies a scenario's 'params' before computing its derived
+    parameters, so overrides propagate exactly as if the YAML had them; the
+    upstream file itself is never written. Dict values (e.g. IPOPT_OPTIONS) are
+    merged into the scenario's or config.py's value. Returns (path, merged).
+    """
+    import yaml
+    source = scenario_file(scenario)
+    data = yaml.safe_load(source.read_text()) or {}
+    base = dict(data.get("params") or {})
+    merged = {}
+    for key,value in params.items():
+        if not key.isupper():
+            raise ValueError(f"Parameter {key!r} is not an upstream config constant")
+        if isinstance(value,dict):
+            current = base.get(key)
+            if current is None:
+                try:
+                    current = config_default(key)
+                except (KeyError,ValueError) as exc:
+                    raise ValueError(f"Cannot merge {key!r}: no literal default in config.py") from exc
+            if not isinstance(current,dict):
+                raise ValueError(f"{key!r} is not a dict parameter")
+            value = {**current,**value}
+        merged[key] = value
+    data["params"] = {**base,**merged}
+    directory = Path(directory)
+    directory.mkdir(parents=True,exist_ok=True)
+    path = directory/source.name          # same basename: SCENARIO_NAME is unchanged
+    path.write_text(yaml.safe_dump(data,sort_keys=False))
+    return path.resolve(),merged
+
+
+def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_dir=None):
     if "config" in sys.modules:
         raise RuntimeError("Use a fresh process for each scenario/controller experiment")
+    merged = {}
+    if params:
+        if overlay_dir is None:
+            raise ValueError("Parameter overrides need a directory for the scenario overlay")
+        path,merged = overlay_scenario(scenario,params,overlay_dir)
+        scenario = str(path)
     os.environ["SCENARIO"] = scenario
     os.environ["CONTROLLER"] = controller
     os.environ["TARGET_MODE"] = "manual"
     sys.path.insert(0, str(UPSTREAM))
     import config as cfg
     cfg.CONTROLLER = controller
+    for key,value in merged.items():
+        if getattr(cfg,key,None) != value:
+            raise ValueError(f"Upstream did not apply parameter override {key!r}")
     if cfg.MPC_BACKEND != "parametric":
         raise ValueError("3D adapter requires the upstream parametric MPC backend")
     world = CollisionWorld(cfg.RECTANGLE_OBSTACLES, cfg.OBSTACLES,

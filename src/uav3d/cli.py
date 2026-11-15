@@ -33,6 +33,10 @@ def parser():
         q.add_argument("--physics",choices=PHYSICS,default="rotorpy",
                        help="rotorpy (default): 6-DoF Hummingbird; ideal: upstream's own planar "
                             "model (dynamics.py), to separate 3D model mismatch from other effects")
+        q.add_argument("--param",action="append",metavar="KEY=VALUE",
+                       help="override an upstream config constant through a scenario overlay "
+                            "written to the run directory (VALUE is YAML; dicts merge), e.g. "
+                            "--param 'IPOPT_OPTIONS={ipopt.max_iter: 100}'. Repeatable.")
         q.add_argument("--speed-guard",choices=SPEED_GUARDS,default="off",
                        help="on: plant-side limit keeping every aircraft below VMAX - 0.5 m/s "
                             "(lag-aware, same for all controllers); off (default)")
@@ -67,6 +71,8 @@ def worker_command(args, controller, output):
                "--compute-ratio",repr(args.compute_ratio),"--physics",args.physics,"--attitude-guard",args.attitude_guard,
                "--speed-guard",args.speed_guard,
                "--out",str(output)]
+    for item in getattr(args,"param",None) or ():
+        command += ["--param",item]
     for name in ("drones","duration","timings_from","command_execution"):
         value = getattr(args,name)
         if value is not None:

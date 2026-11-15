@@ -192,3 +192,12 @@ def test_cli_forwards_speed_guard():
     assert parser().parse_args(["run"]).speed_guard == "off"
     command = worker_command(parser().parse_args(["run","--speed-guard","on"]),"apf","runs/x")
     assert command[command.index("--speed-guard")+1] == "on"
+
+
+def test_cli_forwards_params():
+    from uav3d.cli import parser, worker_command
+    args = parser().parse_args(["run","--param","IPOPT_OPTIONS={ipopt.max_iter: 100}","--param","VMAX=9"])
+    command = worker_command(args,"ours","runs/x")
+    assert [command[i+1] for i,c in enumerate(command) if c=="--param"] == \
+        ["IPOPT_OPTIONS={ipopt.max_iter: 100}","VMAX=9"]
+    assert "--param" not in worker_command(parser().parse_args(["run"]),"ours","runs/x")

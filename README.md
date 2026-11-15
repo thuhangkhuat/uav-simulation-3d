@@ -60,7 +60,17 @@ uv run uav3d run --attitude-guard off --duration 10 --out runs/ours-unguarded
 uv run uav3d run --physics ideal --duration 10 --out runs/ours-ideal
 # Plant-side speed limit at VMAX - 0.5 m/s, identical for every controller.
 uv run uav3d run --speed-guard on --duration 10 --out runs/ours-speed-guard
+# Override upstream config constants through a scenario overlay (dicts merge).
+uv run uav3d run --param 'IPOPT_OPTIONS={ipopt.max_iter: 100}' --duration 10 --out runs/ours-iter100
 ```
+
+`--param KEY=VALUE` (repeatable; `VALUE` is YAML) overrides an upstream config
+constant without touching the submodule: the adapter copies the scenario YAML
+into `<run>/scenario_overlay/` with the extra `params` and points upstream at
+it, so upstream applies them before computing its derived parameters (e.g.
+`CORRIDOR_MARGIN` follows `VMAX`). Dict values such as `IPOPT_OPTIONS` merge
+into the scenario's or `config.py`'s value. `config.json` records
+`param_overrides`; without `--param` upstream loads its own file unchanged.
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
 `--seed 0`, or `--physics-dt 0.0025` explicitly as needed. Benchmark supports a
