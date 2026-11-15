@@ -131,10 +131,15 @@ def report(directory):
                       cfg["horizon_s"],cfg["params"]["VIEWING_RADIUS"],events,result)
         if "watchdog_braking" in data:
             m.update(braking_summary(data["time"],data["watchdog_braking"]))
+        if "speed_guard" in data:
+            shares = 100*np.asarray(data["speed_guard"],bool).mean(axis=0)
+            m.update(speed_guard_pct_max=float(shares.max()),speed_guard_pct_mean=float(shares.mean()))
         m.update(attitude_summary(data["time"],data["aircraft"],data["command"],
                                   np.asarray(cfg["starts"],float)[:,2],cfg.get("attitude_guard")))
     m.update(compute_ratio=cfg.get("compute_ratio",1.),
-             attitude_guard="on" if cfg.get("attitude_guard") else "off")
+             attitude_guard="on" if cfg.get("attitude_guard") else "off",
+             speed_guard="on" if cfg.get("speed_guard") else "off",
+             physics=cfg.get("physics","rotorpy_hummingbird_cmd_acc"))
     m.update(controller=cfg["controller"],scenario=cfg["scenario"],seed=cfg["seed"])
     from .experiment import write_json
     write_json(directory/"metrics.json",m)

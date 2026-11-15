@@ -58,6 +58,8 @@ uv run uav3d run --command-execution hold_latest --duration 10 --out runs/ours-h
 uv run uav3d run --attitude-guard off --duration 10 --out runs/ours-unguarded
 # Upstream's own planar plant model instead of RotorPy (isolates 3D mismatch).
 uv run uav3d run --physics ideal --duration 10 --out runs/ours-ideal
+# Plant-side speed limit at VMAX - 0.5 m/s, identical for every controller.
+uv run uav3d run --speed-guard on --duration 10 --out runs/ours-speed-guard
 ```
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
@@ -209,6 +211,24 @@ checks, logging and metrics stay the same. Comparing it with RotorPy separates
 3D model mismatch from planning delay. There is no attitude, so the attitude
 guard does not apply (`attitude_guard: null`); `config.json` records
 `physics: upstream_dynamics_ideal`.
+
+**Speed guard** (`--speed-guard on`; off by default; adapter safety layer on
+both plants, identical for every controller). Upstream `ours` bounds speed with
+a hard, slack-free `|v| <= VMAX` on every plan step, and its plans ride that
+bound whenever the mission demands speed (initial gathering; scen1 target
+segments at 13 m/s > `VMAX`). With `ACCEL_TAU = 0.2 s` the first step can change
+speed by only about 0.1 m/s, so any gap between the real state and the previous
+plan (RotorPy model mismatch, or a command held through a planning delay) makes
+the problem infeasible, and each failed solve runs `ipopt.max_iter` (about 1 s).
+The guard caps the command component along `w = v + ACCEL_TAU*a` (the speed the
+aircraft settles at if the command dropped to zero; `w' = u` for the first-order
+response) by `5*(VMAX - 0.5 - |w|)`, braking at most `UMAX` and keeping the
+sideways part. On the ideal plant this keeps speed at or below `VMAX - 0.5`
+without lag overshoot, and a planner observing that state can always keep its
+next speed below `VMAX`. On RotorPy `a` is estimated from the last physics step.
+It changes what the aircraft does only near the speed limit; `config.json`
+records `speed_guard`, `trajectory.npz` a per-sample `speed_guard` flag and
+`metrics.json` `speed_guard_pct_max`/`_mean`.
 
 **Attitude guard** (`--attitude-guard on`, the default; adapter safety layer).
 RotorPy points the body z axis along `cmd_acc` and takes thrust as its

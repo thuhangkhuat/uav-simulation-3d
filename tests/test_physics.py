@@ -84,3 +84,38 @@ def test_cli_forwards_physics():
     command = worker_command(parser().parse_args(["run","--physics","ideal"]),"ours","runs/x")
     assert command[command.index("--physics")+1] == "ideal"
     assert parser().parse_args(["run"]).physics == "rotorpy"
+
+
+def test_speed_guard_passes_safe_commands_and_caps_along_speed():
+    from uav3d.physics import speed_guard_settings, speed_guarded
+    assert speed_guard_settings("off",10,.2,5) is None
+    g = speed_guard_settings("on",10,.2,5)
+    assert g["limit"] == 9.5
+    u,clamped = speed_guarded([5,0],[2,0],[0,0],g)               # far below: untouched
+    assert np.allclose(u,[5,0]) and not clamped
+    u,clamped = speed_guarded([3,4],[9.4,0],[3,0],g)             # w = 10 > 9.5: brake along x
+    assert clamped and np.isclose(u[0],-2.5) and np.isclose(u[1],4)   # sideways part kept
+    u,clamped = speed_guarded([-5,0],[9.4,0],[3,0],g)            # already braking harder
+    assert np.allclose(u,[-5,0]) and not clamped
+    u,clamped = speed_guarded([5,0],[30,0],[0,0],g)              # far above: brake at most UMAX
+    assert np.isclose(u[0],-5)
+
+
+def test_speed_guard_holds_the_limit_on_the_ideal_plant_without_overshoot():
+    from uav3d.physics import IdealBackend, speed_guard_settings
+    g = speed_guard_settings("on",10,.2,5)
+    p = IdealBackend([[0.,0.,30.]],0.,.2,g)
+    p.commands[0,:2] = [4.,3.]                  # |u| = UMAX, held for 20 s (a stuck planner)
+    peak = 0.
+    for k in range(4000):
+        p.step(.005)
+        peak = max(peak,np.linalg.norm(p.velocities()[0,:2]))
+        if k == 3000:
+            p.commands[0,:2] = [-3.,4.]         # sharp turn at top speed
+    assert peak <= 9.5+1e-6 and peak > 9.4
+    assert p.speed_clamped[0]
+    # The planner's next-step speed bound stays feasible: u = 0 keeps |v| below VMAX.
+    import dynamics
+    A,B = dynamics.model(.1,0.,.2,2)
+    s = np.r_[p.positions()[0,:2],p.velocities()[0,:2],p.states[0]["s"][:,2]]
+    assert np.linalg.norm((A@s)[2:4]) <= 10

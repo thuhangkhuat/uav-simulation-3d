@@ -10,7 +10,7 @@ import platform
 import subprocess
 import time
 import numpy as np
-from .physics import IdealBackend, RotorPyBackend, guard_settings
+from .physics import IdealBackend, RotorPyBackend, guard_settings, speed_guard_settings
 from .scheduler import PlanningEvent, next_release, parallel_events, plan_against_snapshot, scaled_delay
 from . import upstream
 
@@ -50,6 +50,7 @@ class Simulation:
         self.status = np.zeros((n,3),int)
         self.times, self.aircraft, self.targets, self.commands, self.statuses = [],[],[],[],[]
         self.braking = []
+        self.speed_clamped = []
         self.sample()
 
     def target(self, t):
@@ -62,9 +63,12 @@ class Simulation:
     def sample(self):
         # Watchdog flag: the drone is past its plan's stop point, i.e. braking to rest.
         braking = np.array([s is not None and self.t > s.stop_at+1e-9 for s in self.schedules])
+        # Speed guard flag: it clamped the command during the step that ended here.
+        clamped = np.array(getattr(self.backend,"speed_clamped",np.zeros(len(self.status),bool)),bool)
         values = (self.t,self.backend.packed().copy(),self.target(self.t),
-                  self.backend.commands.copy(),self.status.copy(),braking)
-        seqs = (self.times,self.aircraft,self.targets,self.commands,self.statuses,self.braking)
+                  self.backend.commands.copy(),self.status.copy(),braking,clamped.copy())
+        seqs = (self.times,self.aircraft,self.targets,self.commands,self.statuses,self.braking,
+                self.speed_clamped)
         if self.times and abs(self.times[-1]-self.t) < 1e-12:
             for seq,v in zip(seqs,values):
                 seq[-1] = v
@@ -145,13 +149,16 @@ def run(args):
     if horizon <= 0:
         raise ValueError("Mission duration must be positive")
     physics = getattr(args,"physics",None) or "rotorpy"
+    # Plant-side speed limit, identical for every controller (off by default).
+    speed_guard = speed_guard_settings(getattr(args,"speed_guard",None) or "off",
+                                       cfg.VMAX,cfg.ACCEL_TAU,cfg.UMAX)
     if physics == "ideal":
         # Upstream's own plant model: no attitude, so no attitude guard.
         guard_mode = "off"
-        backend = IdealBackend(starts,cfg.D_FRAC,cfg.ACCEL_TAU)
+        backend = IdealBackend(starts,cfg.D_FRAC,cfg.ACCEL_TAU,speed_guard)
     else:
         guard_mode = getattr(args,"attitude_guard",None) or "on"
-        backend = RotorPyBackend(starts,args.physics_dt,guard_mode)
+        backend = RotorPyBackend(starts,args.physics_dt,guard_mode,speed_guard)
     # "ours" executes its whole plan by mission time by default; the other methods hold the latest command; "ours" may opt out of tracking.
     execution = getattr(args,"command_execution",None) or (
         "tracked_plan_with_watchdog" if cfg.CONTROLLER == "ours" else "hold_latest")
@@ -195,6 +202,7 @@ def run(args):
                          scheduling=args.scheduling,command_execution=execution,
                          compute_ratio=ratio,
                          attitude_guard=guard_settings(guard_mode),
+                         speed_guard=speed_guard,
                          plan_tracking=dict(kp=upstream.TRACK_KP,kd=upstream.TRACK_KD,
                                             stop_accel_ratio=upstream.STOP_ACCEL_RATIO,
                                             track_accel_ratio=upstream.TRACK_ACCEL_RATIO,
@@ -342,7 +350,8 @@ def run(args):
         np.savez_compressed(out/"trajectory.npz",time=np.array(sim.times),
                             aircraft=np.array(sim.aircraft),target=np.array(sim.targets),
                             command=np.array(sim.commands),status=np.array(sim.statuses),
-                            watchdog_braking=np.array(sim.braking))
+                            watchdog_braking=np.array(sim.braking),
+                            speed_guard=np.array(sim.speed_clamped))
         np.savez_compressed(out/"plans.npz",prediction=np.array(plans),
                             epochs=np.array(plan_epochs),drone=np.array(plan_drones))
         (out/"events.jsonl").touch(exist_ok=True)

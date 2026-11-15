@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from . import CONTROLLERS
-from .physics import ATTITUDE_GUARDS, PHYSICS
+from .physics import ATTITUDE_GUARDS, PHYSICS, SPEED_GUARDS
 from .scheduler import COMMAND_EXECUTIONS, SCHEDULES
 
 
@@ -33,6 +33,9 @@ def parser():
         q.add_argument("--physics",choices=PHYSICS,default="rotorpy",
                        help="rotorpy (default): 6-DoF Hummingbird; ideal: upstream's own planar "
                             "model (dynamics.py), to separate 3D model mismatch from other effects")
+        q.add_argument("--speed-guard",choices=SPEED_GUARDS,default="off",
+                       help="on: plant-side limit keeping every aircraft below VMAX - 0.5 m/s "
+                            "(lag-aware, same for all controllers); off (default)")
         q.add_argument("--attitude-guard",choices=ATTITUDE_GUARDS,default="on",
                        help="on (default): keep the commanded vertical acceleration >= 0.5 g and "
                             "the commanded tilt <= 45 deg; off: the unguarded altitude-hold command")
@@ -62,6 +65,7 @@ def worker_command(args, controller, output):
                "--controller",controller,"--seed",str(args.seed),"--physics-dt",str(args.physics_dt),
                "--scheduling",args.scheduling,
                "--compute-ratio",repr(args.compute_ratio),"--physics",args.physics,"--attitude-guard",args.attitude_guard,
+               "--speed-guard",args.speed_guard,
                "--out",str(output)]
     for name in ("drones","duration","timings_from","command_execution"):
         value = getattr(args,name)

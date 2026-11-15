@@ -185,3 +185,10 @@ def test_cli_forwards_attitude_guard():
     assert command[command.index("--attitude-guard")+1] == "on"
     command = worker_command(parser().parse_args(["run","--attitude-guard","off"]),"ours","runs/x")
     assert command[command.index("--attitude-guard")+1] == "off"
+
+
+def test_cli_forwards_speed_guard():
+    from uav3d.cli import parser, worker_command
+    assert parser().parse_args(["run"]).speed_guard == "off"
+    command = worker_command(parser().parse_args(["run","--speed-guard","on"]),"apf","runs/x")
+    assert command[command.index("--speed-guard")+1] == "on"
