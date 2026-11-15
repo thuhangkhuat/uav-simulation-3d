@@ -177,3 +177,11 @@ def test_cli_forwards_command_execution():
     with pytest.raises(SystemExit):
         main(["run","--controller","apf","--command-execution","tracked_plan_with_watchdog",
               "--out","runs/never-created"])
+
+
+def test_cli_forwards_attitude_guard():
+    from uav3d.cli import parser, worker_command
+    command = worker_command(parser().parse_args(["run"]),"ours","runs/x")
+    assert command[command.index("--attitude-guard")+1] == "on"
+    command = worker_command(parser().parse_args(["run","--attitude-guard","off"]),"ours","runs/x")
+    assert command[command.index("--attitude-guard")+1] == "off"

@@ -10,7 +10,7 @@ import platform
 import subprocess
 import time
 import numpy as np
-from .physics import RotorPyBackend
+from .physics import RotorPyBackend, guard_settings
 from .scheduler import PlanningEvent, next_release, parallel_events, plan_against_snapshot, scaled_delay
 from . import upstream
 
@@ -144,7 +144,8 @@ def run(args):
     horizon = min(full_duration,args.duration) if args.duration is not None else full_duration
     if horizon <= 0:
         raise ValueError("Mission duration must be positive")
-    backend = RotorPyBackend(starts,args.physics_dt)
+    guard_mode = getattr(args,"attitude_guard",None) or "on"
+    backend = RotorPyBackend(starts,args.physics_dt,guard_mode)
     # "ours" executes its whole plan by mission time by default; the other methods hold the latest command; "ours" may opt out of tracking.
     execution = getattr(args,"command_execution",None) or (
         "tracked_plan_with_watchdog" if cfg.CONTROLLER == "ours" else "hold_latest")
@@ -187,6 +188,7 @@ def run(args):
                          physics_dt=args.physics_dt,planning_period=cfg.TIMESTEP,
                          scheduling=args.scheduling,command_execution=execution,
                          compute_ratio=ratio,
+                         attitude_guard=guard_settings(guard_mode),
                          plan_tracking=dict(kp=upstream.TRACK_KP,kd=upstream.TRACK_KD,
                                             stop_accel_ratio=upstream.STOP_ACCEL_RATIO,
                                             track_accel_ratio=upstream.TRACK_ACCEL_RATIO,

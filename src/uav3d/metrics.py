@@ -19,6 +19,40 @@ def braking_summary(time, braking):
                 watchdog_braking_episodes=int(sum(episodes)))
 
 
+def tilt_degrees(aircraft):
+    """Angle between body z and world z from the recorded [qx,qy,qz,qw] quaternions."""
+    q = np.asarray(aircraft)[...,6:10]
+    return np.degrees(np.arccos(np.clip(1-2*(q[...,0]**2+q[...,1]**2),-1.,1.)))
+
+
+def attitude_summary(time, aircraft, command, altitudes, guard=None):
+    """Attitude and altitude-hold health; collision checks are purely geometric.
+
+    Durations are summed over drones. Guard shares are the share of recorded
+    samples at which the attitude guard clamped the command (mean over drones).
+    """
+    from .physics import ALTITUDE_KD, ALTITUDE_KP, G
+    time,aircraft = np.asarray(time,float),np.asarray(aircraft,float)
+    tilt = tilt_degrees(aircraft)
+    weights = np.diff(time)
+    inverted = tilt > 90
+    m = dict(tilt_deg_max=float(tilt.max()),tilt_deg_p99=float(np.percentile(tilt,99)),
+             tilt_over_60_s=float(weights@(tilt[:-1] > 60).sum(axis=1)),
+             inverted_s=float(weights@inverted[:-1].sum(axis=1)),
+             inverted_episodes=int(np.sum(inverted[1:] & ~inverted[:-1])+inverted[0].sum()),
+             altitude_error_m_max=float(np.abs(aircraft[...,2]-np.asarray(altitudes)[None]).max()))
+    if guard is not None:
+        # Same rule as physics.commanded_acceleration, vectorized over samples.
+        az = G+ALTITUDE_KP*(np.asarray(altitudes)[None]-aircraft[...,2])-ALTITUDE_KD*aircraft[...,5]
+        vertical = az < guard["az_min_ratio"]*G
+        az = np.maximum(az,guard["az_min_ratio"]*G)
+        u = np.linalg.norm(np.asarray(command,float)[...,:2],axis=-1)
+        tilted = u > az*np.tan(np.radians(guard["tilt_max_deg"]))
+        m.update(guard_vertical_clamp_pct=float(100*vertical.mean()),
+                 guard_tilt_limit_pct=float(100*tilted.mean()))
+    return m
+
+
 def calculate(time, aircraft, target, status, horizon, fov_half, events=(), result=None):
     sys.path.insert(0,str(UPSTREAM)) if str(UPSTREAM) not in sys.path else None
     from metrics import fov_coverage
@@ -97,7 +131,10 @@ def report(directory):
                       cfg["horizon_s"],cfg["params"]["VIEWING_RADIUS"],events,result)
         if "watchdog_braking" in data:
             m.update(braking_summary(data["time"],data["watchdog_braking"]))
-    m.update(compute_ratio=cfg.get("compute_ratio",1.))
+        m.update(attitude_summary(data["time"],data["aircraft"],data["command"],
+                                  np.asarray(cfg["starts"],float)[:,2],cfg.get("attitude_guard")))
+    m.update(compute_ratio=cfg.get("compute_ratio",1.),
+             attitude_guard="on" if cfg.get("attitude_guard") else "off")
     m.update(controller=cfg["controller"],scenario=cfg["scenario"],seed=cfg["seed"])
     from .experiment import write_json
     write_json(directory/"metrics.json",m)

@@ -2,6 +2,46 @@
 from typing import Protocol
 import numpy as np
 
+G = 9.81
+# Altitude hold (adapter): cmd_acc_z = g + KZ*(h - z) - KVZ*vz.
+ALTITUDE_KP, ALTITUDE_KD = 4.0, 4.0
+# Attitude guard (adapter safety layer, outside the planners). RotorPy's cmd_acc
+# points the body z axis along the commanded vector and projects it onto the
+# current body axis for thrust, so a nonpositive vertical part asks the aircraft
+# to tilt past 90 degrees, after which thrust (and control authority) vanishes.
+# The guard keeps the vertical part at or above AZ_MIN_RATIO*g and scales only the
+# horizontal part down to the tilt limit. At hover thrust the limit allows
+# g*tan(45 deg) = 9.81 m/s^2, above both UMAX and the tracking limit 1.5*UMAX.
+AZ_MIN_RATIO, TILT_MAX_DEG = 0.5, 45.0
+ATTITUDE_GUARDS = ("on", "off")
+
+
+def guard_settings(mode="on"):
+    """The record written to config.json; None when the guard is off."""
+    if mode not in ATTITUDE_GUARDS:
+        raise ValueError(f"Unknown attitude guard {mode!r}")
+    return None if mode == "off" else dict(az_min_ratio=AZ_MIN_RATIO,tilt_max_deg=TILT_MAX_DEG,
+                                           altitude_kp=ALTITUDE_KP,altitude_kd=ALTITUDE_KD)
+
+
+def commanded_acceleration(u_xy, z, vz, altitude, guard=True):
+    """cmd_acc for RotorPy, plus (vertical_clamped, tilt_limited) flags.
+
+    u_xy is the horizontal acceleration delivered by the planner path; it is
+    passed through unchanged unless the guard must clamp it.
+    """
+    u = np.array(u_xy[:2],float)
+    az = G+ALTITUDE_KP*(altitude-z)-ALTITUDE_KD*vz
+    vertical = tilt = False
+    if guard:
+        if az < AZ_MIN_RATIO*G:
+            az,vertical = AZ_MIN_RATIO*G,True
+        limit = az*np.tan(np.radians(TILT_MAX_DEG))
+        norm = float(np.linalg.norm(u))
+        if norm > limit:
+            u,tilt = u*(limit/norm),True
+    return np.array([u[0],u[1],az]),vertical,tilt
+
 
 class PhysicsBackend(Protocol):
     commands: np.ndarray
@@ -15,12 +55,14 @@ class PhysicsBackend(Protocol):
 
 
 class RotorPyBackend:
-    def __init__(self, starts, physics_dt=0.005):
+    def __init__(self, starts, physics_dt=0.005, attitude_guard="on"):
         from rotorpy.vehicles.multirotor import Multirotor
         from rotorpy.vehicles.hummingbird_params import quad_params
         self.params = dict(quad_params)
         self.params["motor_noise_std"] = 0.0
         self.dt = physics_dt
+        guard_settings(attitude_guard)
+        self.guard = attitude_guard == "on"
         self.altitudes = np.asarray(starts, float)[:,2].copy()
         self.commands = np.zeros((len(starts), 3))
         hover = np.sqrt(self.params["mass"]*9.81/(4*self.params["k_eta"]))
@@ -34,8 +76,9 @@ class RotorPyBackend:
 
     def control(self, i):
         s = self.states[i]
-        return {"cmd_acc": np.array([*self.commands[i,:2],
-                                    9.81+4*(self.altitudes[i]-s["x"][2])-4*s["v"][2]])}
+        acc,_,_ = commanded_acceleration(self.commands[i,:2],s["x"][2],s["v"][2],
+                                         self.altitudes[i],self.guard)
+        return {"cmd_acc": acc}
 
     def positions(self):
         return np.array([s["x"] for s in self.states])

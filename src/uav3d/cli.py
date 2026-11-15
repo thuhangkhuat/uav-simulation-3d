@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from . import CONTROLLERS
+from .physics import ATTITUDE_GUARDS
 from .scheduler import COMMAND_EXECUTIONS, SCHEDULES
 
 
@@ -29,6 +30,9 @@ def parser():
         q.add_argument("--compute-ratio",type=float,default=1.,
                        help="scale every measured planning duration by r before injecting it as "
                             "mission-time delay (e.g. 0.5: onboard computer twice as fast); default 1")
+        q.add_argument("--attitude-guard",choices=ATTITUDE_GUARDS,default="on",
+                       help="on (default): keep the commanded vertical acceleration >= 0.5 g and "
+                            "the commanded tilt <= 45 deg; off: the unguarded altitude-hold command")
         q.add_argument("--command-execution",choices=COMMAND_EXECUTIONS,default=None,
                        help="tracked_plan_with_watchdog (default for ours): follow the whole delivered "
                             "plan with the adapter tracking/watchdog layer; hold_latest (default for "
@@ -54,7 +58,8 @@ def worker_command(args, controller, output):
     command = [sys.executable,"-m","uav3d.cli","_worker","--scenario",args.scenario,
                "--controller",controller,"--seed",str(args.seed),"--physics-dt",str(args.physics_dt),
                "--scheduling",args.scheduling,
-               "--compute-ratio",repr(args.compute_ratio),"--out",str(output)]
+               "--compute-ratio",repr(args.compute_ratio),"--attitude-guard",args.attitude_guard,
+               "--out",str(output)]
     for name in ("drones","duration","timings_from","command_execution"):
         value = getattr(args,name)
         if value is not None:

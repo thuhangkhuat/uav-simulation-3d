@@ -54,6 +54,8 @@ uv run uav3d run --duration 10 --timings-from runs/ours-demo --out runs/ours-rep
 # Ours without the adapter's plan-tracking/watchdog layer: hold the latest
 # upstream command, as every other method does.
 uv run uav3d run --command-execution hold_latest --duration 10 --out runs/ours-hold
+# Reproduce runs made before the attitude guard existed.
+uv run uav3d run --attitude-guard off --duration 10 --out runs/ours-unguarded
 ```
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
@@ -195,6 +197,22 @@ initial altitude, rather than having `z` clamped. Acceleration feedback is
 measured from the plant and mapped to the upstream `a = dv/dt + D*v` state.
 Upstream's artificial plant lag is not applied a second time.
 
+**Attitude guard** (`--attitude-guard on`, the default; adapter safety layer).
+RotorPy points the body z axis along `cmd_acc` and takes thrust as its
+projection on the current body axis. Unguarded, a fast climb makes the
+altitude term `-4*vz` cancel gravity (at about 2.4 m/s), so the vertical part
+turns nonpositive: the aircraft is commanded past 90 degrees of tilt, thrust
+projects negative, all rotors stop, and it tumbles. Abrupt planner reversals
+(about 10 m/s^2 in one period) cause the rotor saturation that starts such a
+climb. The guard keeps the vertical part at or above `0.5*g` and scales only
+the horizontal part, keeping its direction, so that the commanded tilt stays at
+or below 45 degrees. At hover this admits 9.81 m/s^2 horizontally, above both
+`UMAX` and the tracking limit `1.5*UMAX`, so it acts only near a loss of
+attitude. Planner outputs are unchanged; the recorded `command` is the
+unguarded horizontal command, and upstream observes the resulting measured
+acceleration. `config.json` records `attitude_guard` (null when off). `off`
+reproduces runs made before the guard; such runs have no `attitude_guard` key.
+
 The default Hummingbird has no motor noise. Aerodynamics and wind are disabled;
 the physical response generally differs from upstream's predictive first-order
 lag. A scenario with nonzero predictive `D_FRAC` still uses this drag-free plant;
@@ -231,6 +249,13 @@ Each run saves:
 - `plans.npz`: published predictions, their observation/publication epochs,
   and drone IDs. Prediction layout follows upstream `[x,y,z,vx,vy,vz]`.
 - `result.json`, `planning.log`, and `metrics.json`/`.csv`/`.md`.
+
+Attitude health is reported because collision checks are geometric only: an
+aircraft can tumble without hitting anything. `metrics.json` has `tilt_deg_max`,
+`tilt_deg_p99`, `tilt_over_60_s` and `inverted_s` (tilt above 90 degrees; both
+summed over drones), `inverted_episodes`, `altitude_error_m_max`, and, with the
+guard on, `guard_vertical_clamp_pct`/`guard_tilt_limit_pct` (share of recorded
+samples at which it clamped).
 
 Mission metrics integrate sampled values with actual timestamp intervals.
 Coverage uses upstream's exact footprint-union calculation and its metric
