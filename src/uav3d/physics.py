@@ -105,3 +105,68 @@ class RotorPyBackend:
     def packed(self):
         return np.array([np.r_[s["x"],s["v"],s["q"],s["w"],s["rotor_speeds"]]
                          for s in self.states])
+
+
+PHYSICS = ("rotorpy", "ideal")
+
+
+class IdealBackend:
+    """Upstream's own plant model (dynamics.py), for isolating 3D model mismatch.
+
+    Each horizontal axis follows exactly what the upstream MPC predicts and what
+    upstream's own simulator integrates: p' = v, v' = a - D v, a' = (u - a)/tau,
+    discretised exactly (zero-order hold) for every step duration, so splitting
+    a planning period into physics steps reproduces the period's transition.
+    Altitude is held, attitude stays level, and there are no rotors or guards.
+    """
+
+    def __init__(self, starts, drag, tau):
+        import sys
+        from .upstream import UPSTREAM
+        if str(UPSTREAM) not in sys.path:
+            sys.path.insert(0,str(UPSTREAM))
+        import dynamics
+        self._axis_model = dynamics.axis_model
+        self.drag, self.tau = float(drag), float(tau)
+        starts = np.asarray(starts,float)
+        n = len(starts)
+        self.commands = np.zeros((n,3))
+        # Per drone: rows (x, y), columns [p, v, a]; z held at its start.
+        self.states = [dict(s=np.column_stack([p[:2],np.zeros(2),np.zeros(2)]),z=float(p[2]))
+                       for p in starts]
+        self._models = {}
+
+    def _model(self, dt):
+        key = round(dt,12)
+        if key not in self._models:
+            self._models[key] = self._axis_model(dt,self.drag,self.tau)
+        return self._models[key]
+
+    def positions(self):
+        return np.array([[*st["s"][:,0],st["z"]] for st in self.states])
+
+    def velocities(self):
+        return np.array([[*st["s"][:,1],0.] for st in self.states])
+
+    def observations(self):
+        # The adapter maps measured dv/dt to upstream's a = dv/dt + D v; return dv/dt.
+        pv = np.column_stack([self.positions(),self.velocities()])
+        acc = np.array([[*(st["s"][:,2]-self.drag*st["s"][:,1]),0.] for st in self.states])
+        return pv,acc
+
+    def step(self, duration):
+        Ad,Bd = self._model(duration)
+        for i,st in enumerate(self.states):
+            u = np.asarray(self.commands[i,:2],float)
+            st["s"] = st["s"]@Ad.T+u[:,None]*Bd[:,0][None]
+
+    def snapshot(self):
+        return [dict(s=st["s"].copy(),z=st["z"]) for st in self.states]
+
+    def restore(self, snapshot):
+        self.states = snapshot
+
+    def packed(self):
+        # Same 17-column layout as RotorPy: level attitude, no rotors.
+        return np.array([np.r_[st["s"][:,0],st["z"],st["s"][:,1],0.,0.,0.,0.,1.,np.zeros(7)]
+                         for st in self.states])

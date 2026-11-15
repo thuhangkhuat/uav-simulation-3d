@@ -55,3 +55,32 @@ def test_attitude_summary_flags_inversion():
     assert m["tilt_deg_max"] > 179 and m["inverted_episodes"] == 1
     assert np.isclose(m["inverted_s"],1.0) and np.isclose(m["altitude_error_m_max"],3)
     assert "guard_tilt_limit_pct" not in m
+
+
+def test_ideal_backend_reproduces_upstream_dynamics():
+    from uav3d.physics import IdealBackend
+    drag,tau,dt = 0.1,0.2,0.1
+    p = IdealBackend([[1.,2.,30.]],drag,tau)
+    import dynamics       # upstream; IdealBackend put it on sys.path
+    A,B = dynamics.model(dt,drag,tau,2)
+    s = np.zeros(6); s[:2] = [1.,2.]           # [px, py, vx, vy, ax, ay]
+    for u in ([5.,0.],[-3.,4.],[0.,0.]):
+        p.commands[0,:2] = u
+        for _ in range(20):                    # 20 physics steps of 5 ms = one period
+            p.step(dt/20)
+        s = A@s+B@np.array(u)
+        assert np.allclose(p.positions()[0,:2],s[:2]) and np.allclose(p.velocities()[0,:2],s[2:4])
+    assert p.positions()[0,2] == 30.
+    pv,acc = p.observations()
+    assert np.allclose(acc[0,:2]+drag*pv[0,3:5],s[4:6])   # adapter's a = dv/dt + D v
+    snap = p.snapshot(); p.commands[0,:2] = [5.,5.]; p.step(.05); p.restore(snap)
+    assert np.allclose(p.velocities()[0,:2],s[2:4])
+    packed = p.packed()
+    assert packed.shape == (1,17) and packed[0,9] == 1.
+
+
+def test_cli_forwards_physics():
+    from uav3d.cli import parser, worker_command
+    command = worker_command(parser().parse_args(["run","--physics","ideal"]),"ours","runs/x")
+    assert command[command.index("--physics")+1] == "ideal"
+    assert parser().parse_args(["run"]).physics == "rotorpy"

@@ -10,7 +10,7 @@ import platform
 import subprocess
 import time
 import numpy as np
-from .physics import RotorPyBackend, guard_settings
+from .physics import IdealBackend, RotorPyBackend, guard_settings
 from .scheduler import PlanningEvent, next_release, parallel_events, plan_against_snapshot, scaled_delay
 from . import upstream
 
@@ -144,8 +144,14 @@ def run(args):
     horizon = min(full_duration,args.duration) if args.duration is not None else full_duration
     if horizon <= 0:
         raise ValueError("Mission duration must be positive")
-    guard_mode = getattr(args,"attitude_guard",None) or "on"
-    backend = RotorPyBackend(starts,args.physics_dt,guard_mode)
+    physics = getattr(args,"physics",None) or "rotorpy"
+    if physics == "ideal":
+        # Upstream's own plant model: no attitude, so no attitude guard.
+        guard_mode = "off"
+        backend = IdealBackend(starts,cfg.D_FRAC,cfg.ACCEL_TAU)
+    else:
+        guard_mode = getattr(args,"attitude_guard",None) or "on"
+        backend = RotorPyBackend(starts,args.physics_dt,guard_mode)
     # "ours" executes its whole plan by mission time by default; the other methods hold the latest command; "ours" may opt out of tracking.
     execution = getattr(args,"command_execution",None) or (
         "tracked_plan_with_watchdog" if cfg.CONTROLLER == "ours" else "hold_latest")
@@ -198,7 +204,8 @@ def run(args):
                          if follow_plan else None,
                          deployment="one_worker_per_uav" if args.scheduling=="parallel"
                          else "shared_ground_cpu_sequential",order="ascending_drone_id",
-                         physics="rotorpy_hummingbird_cmd_acc",aerodynamics=False,
+                         physics=("upstream_dynamics_ideal" if physics == "ideal"
+                                  else "rotorpy_hummingbird_cmd_acc"),aerodynamics=False,
                          upstream_sha=_git_sha(upstream.UPSTREAM),
                          rotorpy_sha="40b09697a6a1596d404a67f459941d46a39eedd3",
                          package_versions={p:importlib.metadata.version(p)

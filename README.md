@@ -56,6 +56,8 @@ uv run uav3d run --duration 10 --timings-from runs/ours-demo --out runs/ours-rep
 uv run uav3d run --command-execution hold_latest --duration 10 --out runs/ours-hold
 # Reproduce runs made before the attitude guard existed.
 uv run uav3d run --attitude-guard off --duration 10 --out runs/ours-unguarded
+# Upstream's own planar plant model instead of RotorPy (isolates 3D mismatch).
+uv run uav3d run --physics ideal --duration 10 --out runs/ours-ideal
 ```
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
@@ -196,6 +198,17 @@ thrust limits, and Newton–Euler rigid-body dynamics. Each drone holds its
 initial altitude, rather than having `z` clamped. Acceleration feedback is
 measured from the plant and mapped to the upstream `a = dv/dt + D*v` state.
 Upstream's artificial plant lag is not applied a second time.
+
+**Ideal plant** (`--physics ideal`, compatibility layer for diagnosis). The
+plant is upstream's own model, `dynamics.axis_model`: per horizontal axis
+`p' = v`, `v' = a - D_FRAC*v`, `a' = (u - a)/ACCEL_TAU`, discretised exactly for
+every step (so 5 ms steps compose to upstream's 0.1 s transition), with altitude
+held and level attitude. The planners then see exactly the plant they model, as
+in upstream's own simulator, while the adapter's scheduling, delays, collision
+checks, logging and metrics stay the same. Comparing it with RotorPy separates
+3D model mismatch from planning delay. There is no attitude, so the attitude
+guard does not apply (`attitude_guard: null`); `config.json` records
+`physics: upstream_dynamics_ideal`.
 
 **Attitude guard** (`--attitude-guard on`, the default; adapter safety layer).
 RotorPy points the body z axis along `cmd_acc` and takes thrust as its

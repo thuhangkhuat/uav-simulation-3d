@@ -1,0 +1,9 @@
+nohup: ignoring input
+
+******************************************************************************
+This program contains Ipopt, a library for large-scale nonlinear optimization.
+ Ipopt is released as open source code under the Eclipse Public License (EPL).
+         For more information visit https://github.com/coin-or/Ipopt
+******************************************************************************
+
+ours: completed, 749.000s mission, 2350.76s wall; runs/ours-hold-r0-guard-full
