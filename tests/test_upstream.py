@@ -100,3 +100,42 @@ def test_scenario_overlay_merges_without_touching_upstream(tmp_path):
                            "cfg,_,_=upstream.load('scen1');print(cfg.CORRIDOR_MARGIN)"],
                           capture_output=True,text=True,check=True).stdout.split()
     assert float(out[3]) < float(base[0])        # derived from VMAX, so it follows the override
+
+
+def test_target_speed_cap_overlay(tmp_path):
+    import subprocess, sys, yaml
+    from uav3d.upstream import overlay_scenario, scenario_file
+    original = yaml.safe_load(scenario_file("scen1").read_text())
+    path,_ = overlay_scenario("scen1",{},tmp_path,target_speed_cap=9)
+    data = yaml.safe_load(path.read_text())
+    speeds = data["target"]["speeds"]
+    assert max(speeds) == 9 and len(speeds) == len(original["target"]["speeds"])
+    assert [s for s,o in zip(speeds,original["target"]["speeds"]) if o <= 9] == \
+           [o for o in original["target"]["speeds"] if o <= 9]          # slower segments unchanged
+    assert data["target"]["waypoints"] == original["target"]["waypoints"]
+    code = ("from uav3d import upstream;import numpy as np;"
+            "cfg,_,_=upstream.load('scen1','ours',None,None,%r,9.0);"
+            "from target_manual import create_target;"
+            "print(np.max(cfg.TAR_SPEEDS),len(create_target(verbose=False).trajectory))" % str(tmp_path/"run"))
+    out = subprocess.run([sys.executable,"-c",code],capture_output=True,text=True,check=True).stdout.split()
+    assert float(out[0]) == 9.0
+    assert int(out[1]) > 7490          # slower fast segments: a longer target trajectory than scen1
+
+
+def test_adapter_scenario_copy_reproduces_scen1_and_can_be_edited(tmp_path):
+    import subprocess, sys, yaml
+    from pathlib import Path
+    from uav3d.upstream import ROOT, scenario_file
+    copy = ROOT/"scenarios"/"scen1_3d.yaml"
+    assert yaml.safe_load(copy.read_text()) == yaml.safe_load(scenario_file("scen1").read_text())
+    probe = ("from uav3d import upstream;import json,numpy as np;cfg,_,_=upstream.load(%r);"
+             "d=cfg.SCENARIO_DEF;print(json.dumps([cfg.SCENARIO_NAME,d['rects'],d['circles'],d['speeds'],"
+             "d['params'],float(cfg.CORRIDOR_MARGIN)]))")
+    run = lambda s: __import__("json").loads(subprocess.run([sys.executable,"-c",probe % s],
+                    capture_output=True,text=True,check=True).stdout)
+    base,mine = run("scen1"),run(str(copy))
+    assert mine[0] == "scen1_3d" and mine[1:] == base[1:]
+    edited = tmp_path/"edited.yaml"                     # an edit takes effect, derived values follow
+    data = yaml.safe_load(copy.read_text()); data["params"]["CORRIDOR_MARGIN"] = 2.8
+    edited.write_text(yaml.safe_dump(data))
+    assert run(str(edited))[5] == 2.8 and base[5] < 1.0

@@ -62,7 +62,22 @@ uv run uav3d run --physics ideal --duration 10 --out runs/ours-ideal
 uv run uav3d run --speed-guard on --duration 10 --out runs/ours-speed-guard
 # Override upstream config constants through a scenario overlay (dicts merge).
 uv run uav3d run --param 'IPOPT_OPTIONS={ipopt.max_iter: 100}' --duration 10 --out runs/ours-iter100
+# Scenario variant: lower target segments faster than 9 m/s (scen1 has 13 m/s ones).
+uv run uav3d run --target-speed-cap 9 --duration 10 --out runs/ours-tcap9
 ```
+
+**Editable scenarios.** `--scenario` also takes a path to a scenario YAML.
+`scenarios/scen1_3d.yaml` is an adapter-side copy of upstream `scen1` (same
+content, plus comments on the knobs found while debugging `ours` in 3D); edit
+it, or copies of it, instead of the submodule:
+`uv run uav3d run --scenario scenarios/scen1_3d.yaml ...`. Unedited it
+reproduces `scen1` (scenario name `scen1_3d`). Upstream resolves absolute paths
+as given, so the file is loaded exactly as an upstream scenario: `params` apply
+before derived parameters are computed. A `params` dict value (e.g.
+`IPOPT_OPTIONS`) replaces `config.py`'s whole dict there, unlike `--param`,
+which merges. Every run copies the scenario file it loaded to
+`<run>/scenario.yaml` and records `scenario_file` and `scenario_sha256` in
+`config.json`.
 
 `--param KEY=VALUE` (repeatable; `VALUE` is YAML) overrides an upstream config
 constant without touching the submodule: the adapter copies the scenario YAML
@@ -71,6 +86,10 @@ it, so upstream applies them before computing its derived parameters (e.g.
 `CORRIDOR_MARGIN` follows `VMAX`). Dict values such as `IPOPT_OPTIONS` merge
 into the scenario's or `config.py`'s value. `config.json` records
 `param_overrides`; without `--param` upstream loads its own file unchanged.
+`--target-speed-cap V` uses the same overlay to lower every target segment
+speed above `V` (and `tar_max_speed`, if higher) to `V`; waypoints and slower
+segments are kept, so the target trajectory and mission get slightly longer
+(scen1: 749 s, 761 s at `V = 9`). `config.json` records `target_speed_cap`.
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
 `--seed 0`, or `--physics-dt 0.0025` explicitly as needed. Benchmark supports a

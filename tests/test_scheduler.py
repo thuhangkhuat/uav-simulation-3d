@@ -201,3 +201,12 @@ def test_cli_forwards_params():
     assert [command[i+1] for i,c in enumerate(command) if c=="--param"] == \
         ["IPOPT_OPTIONS={ipopt.max_iter: 100}","VMAX=9"]
     assert "--param" not in worker_command(parser().parse_args(["run"]),"ours","runs/x")
+
+
+def test_cli_forwards_target_speed_cap():
+    import pytest
+    from uav3d.cli import main, parser, worker_command
+    command = worker_command(parser().parse_args(["run","--target-speed-cap","9"]),"ours","runs/x")
+    assert command[command.index("--target-speed-cap")+1] == "9.0"
+    with pytest.raises(SystemExit):
+        main(["run","--target-speed-cap","0","--out","runs/never-created"])

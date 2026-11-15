@@ -10,8 +10,16 @@ ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM = Path(os.environ.get("UAV3D_UPSTREAM", ROOT / "motion_planning_MPC"))
 
 
+def is_scenario_path(scenario):
+    """An adapter-side scenario: an existing YAML file given by path, not an upstream name."""
+    path = Path(str(scenario))
+    return path.suffix in (".yaml",".yml") and path.is_file()
+
+
 def scenario_file(scenario):
-    """The upstream scenario YAML, resolved like upstream's config.scenario_path."""
+    """The scenario YAML: a file path as given, or upstream's name resolution."""
+    if is_scenario_path(scenario):
+        return Path(str(scenario)).resolve()
     for name in (f"scen{scenario}.yaml",f"{scenario}.yaml",str(scenario)):
         path = Path(name) if os.path.isabs(name) else UPSTREAM/"scenarios"/name
         if path.is_file():
@@ -30,8 +38,11 @@ def config_default(name):
     raise KeyError(name)
 
 
-def overlay_scenario(scenario, params, directory):
+def overlay_scenario(scenario, params, directory, target_speed_cap=None):
     """Write a copy of the upstream scenario with extra 'params' into directory.
+
+    target_speed_cap lowers every target segment speed above it to it (and
+    tar_max_speed, if higher); the waypoints and other segments are unchanged.
 
     Upstream applies a scenario's 'params' before computing its derived
     parameters, so overrides propagate exactly as if the YAML had them; the
@@ -58,6 +69,14 @@ def overlay_scenario(scenario, params, directory):
             value = {**current,**value}
         merged[key] = value
     data["params"] = {**base,**merged}
+    if target_speed_cap is not None:
+        cap = float(target_speed_cap)
+        if not cap > 0:
+            raise ValueError("Target speed cap must be positive")
+        target = data.setdefault("target",{})
+        if target.get("speeds"):
+            target["speeds"] = [min(float(v),cap) for v in target["speeds"]]
+        data["tar_max_speed"] = min(float(data.get("tar_max_speed",cap)),cap)
     directory = Path(directory)
     directory.mkdir(parents=True,exist_ok=True)
     path = directory/source.name          # same basename: SCENARIO_NAME is unchanged
@@ -65,15 +84,18 @@ def overlay_scenario(scenario, params, directory):
     return path.resolve(),merged
 
 
-def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_dir=None):
+def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_dir=None,
+         target_speed_cap=None):
     if "config" in sys.modules:
         raise RuntimeError("Use a fresh process for each scenario/controller experiment")
     merged = {}
-    if params:
+    if params or target_speed_cap is not None:
         if overlay_dir is None:
-            raise ValueError("Parameter overrides need a directory for the scenario overlay")
-        path,merged = overlay_scenario(scenario,params,overlay_dir)
+            raise ValueError("Scenario overrides need a directory for the scenario overlay")
+        path,merged = overlay_scenario(scenario,params or {},overlay_dir,target_speed_cap)
         scenario = str(path)
+    elif is_scenario_path(scenario):
+        scenario = str(scenario_file(scenario))     # upstream resolves absolute paths as given
     os.environ["SCENARIO"] = scenario
     os.environ["CONTROLLER"] = controller
     os.environ["TARGET_MODE"] = "manual"
@@ -83,6 +105,9 @@ def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_
     for key,value in merged.items():
         if getattr(cfg,key,None) != value:
             raise ValueError(f"Upstream did not apply parameter override {key!r}")
+    if target_speed_cap is not None and cfg.TAR_SPEEDS is not None \
+            and float(np.max(cfg.TAR_SPEEDS)) > float(target_speed_cap)+1e-12:
+        raise ValueError("Upstream did not apply the target speed cap")
     if cfg.MPC_BACKEND != "parametric":
         raise ValueError("3D adapter requires the upstream parametric MPC backend")
     world = CollisionWorld(cfg.RECTANGLE_OBSTACLES, cfg.OBSTACLES,

@@ -16,7 +16,9 @@ def parser():
     sub = p.add_subparsers(dest="command",required=True)
     for name in ("run","benchmark","_worker"):
         q = sub.add_parser(name,help="isolated experiment" if name=="run" else "all five methods" if name=="benchmark" else argparse.SUPPRESS)
-        q.add_argument("--scenario",default="scen1")
+        q.add_argument("--scenario",default="scen1",
+                       help="upstream scenario name (default scen1), or a path to a scenario YAML, "
+                            "e.g. scenarios/scen1_3d.yaml (an editable adapter-side copy)")
         q.add_argument("--controller",choices=CONTROLLERS,default="ours")
         q.add_argument("--drones",type=int,choices=(5,9),default=None)
         q.add_argument("--seed",type=int,default=0)
@@ -37,6 +39,9 @@ def parser():
                        help="override an upstream config constant through a scenario overlay "
                             "written to the run directory (VALUE is YAML; dicts merge), e.g. "
                             "--param 'IPOPT_OPTIONS={ipopt.max_iter: 100}'. Repeatable.")
+        q.add_argument("--target-speed-cap",type=float,default=None,metavar="V",
+                       help="scenario overlay: lower every target segment faster than V m/s to V "
+                            "(e.g. scen1's 13 m/s segments); other segments and waypoints unchanged")
         q.add_argument("--speed-guard",choices=SPEED_GUARDS,default="off",
                        help="on: plant-side limit keeping every aircraft below VMAX - 0.5 m/s "
                             "(lag-aware, same for all controllers); off (default)")
@@ -65,7 +70,10 @@ def parser():
 
 
 def worker_command(args, controller, output):
-    command = [sys.executable,"-m","uav3d.cli","_worker","--scenario",args.scenario,
+    scenario = args.scenario
+    if Path(scenario).suffix in (".yaml",".yml") and Path(scenario).is_file():
+        scenario = str(Path(scenario).resolve())    # the worker may not share our cwd
+    command = [sys.executable,"-m","uav3d.cli","_worker","--scenario",scenario,
                "--controller",controller,"--seed",str(args.seed),"--physics-dt",str(args.physics_dt),
                "--scheduling",args.scheduling,
                "--compute-ratio",repr(args.compute_ratio),"--physics",args.physics,"--attitude-guard",args.attitude_guard,
@@ -73,7 +81,7 @@ def worker_command(args, controller, output):
                "--out",str(output)]
     for item in getattr(args,"param",None) or ():
         command += ["--param",item]
-    for name in ("drones","duration","timings_from","command_execution"):
+    for name in ("drones","duration","timings_from","command_execution","target_speed_cap"):
         value = getattr(args,name)
         if value is not None:
             command += ["--"+name.replace("_","-"),str(value)]
@@ -91,6 +99,9 @@ def main(argv=None):
             p.error("--duration must be finite and positive")
         if not math.isfinite(args.compute_ratio) or args.compute_ratio<0:
             p.error("--compute-ratio must be finite and nonnegative")
+        if args.target_speed_cap is not None and (not math.isfinite(args.target_speed_cap)
+                                                  or args.target_speed_cap<=0):
+            p.error("--target-speed-cap must be finite and positive")
         methods = args.controllers if args.command=="benchmark" else [args.controller]
         if args.command_execution=="tracked_plan_with_watchdog" and set(methods)-{"ours"}:
             p.error("--command-execution tracked_plan_with_watchdog applies to ours only")
@@ -101,7 +112,7 @@ def main(argv=None):
             return run(args)
     if args.command in ("run","benchmark"):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        out = Path(args.out or f"runs/{args.scenario}_{stamp}")
+        out = Path(args.out or f"runs/{Path(args.scenario).stem}_{stamp}")
         env = os.environ.copy()
         env.update({k:"1" for k in ("OMP_NUM_THREADS","OPENBLAS_NUM_THREADS","MKL_NUM_THREADS",
                                     "NUMEXPR_NUM_THREADS","VECLIB_MAXIMUM_THREADS","BLIS_NUM_THREADS")})

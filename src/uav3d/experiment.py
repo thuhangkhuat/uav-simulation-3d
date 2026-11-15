@@ -146,8 +146,9 @@ def run(args):
     np.random.seed(args.seed)
     init_start = time.perf_counter()
     params = parse_params(getattr(args,"param",None))
+    speed_cap = getattr(args,"target_speed_cap",None)
     cfg,world,starts = upstream.load(args.scenario,args.controller,args.drones,
-                                     params,out/"scenario_overlay")
+                                     params,out/"scenario_overlay",speed_cap)
     issues = cfg.validate_config()
     for level,message in issues:
         if level != "INFO":
@@ -216,6 +217,7 @@ def run(args):
                          scheduling=args.scheduling,command_execution=execution,
                          compute_ratio=ratio,
                          param_overrides=params or None,
+                         target_speed_cap=speed_cap,
                          attitude_guard=guard_settings(guard_mode),
                          speed_guard=speed_guard,
                          plan_tracking=dict(kp=upstream.TRACK_KP,kd=upstream.TRACK_KD,
@@ -237,6 +239,12 @@ def run(args):
                          provenance=adapter_provenance(),
                          thread_limits={k:os.environ.get(k) for k in
                                         ("OMP_NUM_THREADS","OPENBLAS_NUM_THREADS","MKL_NUM_THREADS")})
+    # Snapshot the scenario file actually loaded (it may be edited later).
+    import hashlib, shutil
+    scenario_source = Path(cfg.SCENARIO_DEF["file"])
+    shutil.copyfile(scenario_source,out/"scenario.yaml")
+    configuration.update(scenario_file=str(scenario_source),
+                         scenario_sha256=hashlib.sha256(scenario_source.read_bytes()).hexdigest())
     write_json(out/"config.json",configuration)
     sim = Simulation(backend,world,target_samples,cfg.TIMESTEP,horizon,args.physics_dt)
     initial = world.first_hit(starts,starts)
