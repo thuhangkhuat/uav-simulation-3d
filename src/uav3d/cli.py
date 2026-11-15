@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 from . import CONTROLLERS
-from .scheduler import SCHEDULES
+from .scheduler import COMMAND_EXECUTIONS, SCHEDULES
 
 
 def parser():
@@ -29,6 +29,10 @@ def parser():
         q.add_argument("--compute-ratio",type=float,default=1.,
                        help="scale every measured planning duration by r before injecting it as "
                             "mission-time delay (e.g. 0.5: onboard computer twice as fast); default 1")
+        q.add_argument("--command-execution",choices=COMMAND_EXECUTIONS,default=None,
+                       help="tracked_plan_with_watchdog (default for ours): follow the whole delivered "
+                            "plan with the adapter tracking/watchdog layer; hold_latest (default for "
+                            "the other methods): hold the latest upstream command until the next one")
         if name=="benchmark":
             q.add_argument("--controllers",nargs="+",choices=CONTROLLERS,default=list(CONTROLLERS))
     q = sub.add_parser("metrics",help="recompute timestamp-based metrics from recorded data")
@@ -51,7 +55,7 @@ def worker_command(args, controller, output):
                "--controller",controller,"--seed",str(args.seed),"--physics-dt",str(args.physics_dt),
                "--scheduling",args.scheduling,
                "--compute-ratio",repr(args.compute_ratio),"--out",str(output)]
-    for name in ("drones","duration","timings_from"):
+    for name in ("drones","duration","timings_from","command_execution"):
         value = getattr(args,name)
         if value is not None:
             command += ["--"+name.replace("_","-"),str(value)]
@@ -69,6 +73,9 @@ def main(argv=None):
             p.error("--duration must be finite and positive")
         if not math.isfinite(args.compute_ratio) or args.compute_ratio<0:
             p.error("--compute-ratio must be finite and nonnegative")
+        methods = args.controllers if args.command=="benchmark" else [args.controller]
+        if args.command_execution=="tracked_plan_with_watchdog" and set(methods)-{"ours"}:
+            p.error("--command-execution tracked_plan_with_watchdog applies to ours only")
     if args.command=="_worker":
         from threadpoolctl import threadpool_limits
         from .experiment import run

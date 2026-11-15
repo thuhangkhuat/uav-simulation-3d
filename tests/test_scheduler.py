@@ -165,3 +165,15 @@ def test_cli_forwards_compute_ratio():
     command = worker_command(args,"ours","runs/x")
     assert command[command.index("--compute-ratio")+1] == "0.5"
     assert parser().parse_args(["run"]).compute_ratio == 1.
+
+
+def test_cli_forwards_command_execution():
+    import pytest
+    from uav3d.cli import main, parser, worker_command
+    args = parser().parse_args(["run","--command-execution","hold_latest"])
+    command = worker_command(args,"ours","runs/x")
+    assert command[command.index("--command-execution")+1] == "hold_latest"
+    assert "--command-execution" not in worker_command(parser().parse_args(["run"]),"ours","runs/x")
+    with pytest.raises(SystemExit):
+        main(["run","--controller","apf","--command-execution","tracked_plan_with_watchdog",
+              "--out","runs/never-created"])

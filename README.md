@@ -51,6 +51,9 @@ uv run uav3d replay runs/ours-demo --out exports/overview.mp4 --camera overview
 
 # Reuse a run's measured command delays; keep all experiment options identical.
 uv run uav3d run --duration 10 --timings-from runs/ours-demo --out runs/ours-repeated
+# Ours without the adapter's plan-tracking/watchdog layer: hold the latest
+# upstream command, as every other method does.
+uv run uav3d run --command-execution hold_latest --duration 10 --out runs/ours-hold
 ```
 
 Select `--controller ours|apf|pure_mpc|cbf_qp_lag|impc_ob_rec`, `--scenario scen1`,
@@ -139,6 +142,13 @@ physics rate:
   command is removed; above it, it brakes by `6*(VMAX - speed)`. Holding one
   command for several periods had driven aircraft far past `VMAX`, after which
   the MPC's hard speed bound is infeasible.
+
+`--command-execution hold_latest` turns this layer off for `ours`: each
+delivered result is upstream's issued acceleration, held until the next one,
+exactly as for the other methods, and upstream's own prediction is published
+unchanged. This is the least-modified baseline; it is not the default because
+holding one command through the planning delay drives the aircraft past
+`VMAX`. `config.json` records the mode as `command_execution`.
 
 These gains and ratios are adapter constants in `upstream.py`, recorded in
 `config.json` under `plan_tracking`. Results and predictions are published only on completion. Nominal

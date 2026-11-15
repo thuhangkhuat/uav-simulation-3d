@@ -145,9 +145,12 @@ def run(args):
     if horizon <= 0:
         raise ValueError("Mission duration must be positive")
     backend = RotorPyBackend(starts,args.physics_dt)
-    # "ours" executes its whole plan by mission time; other methods hold the latest command.
-    follow_plan = cfg.CONTROLLER == "ours"
-    execution = "tracked_plan_with_watchdog" if follow_plan else "hold_latest"
+    # "ours" executes its whole plan by mission time by default; the other methods hold the latest command; "ours" may opt out of tracking.
+    execution = getattr(args,"command_execution",None) or (
+        "tracked_plan_with_watchdog" if cfg.CONTROLLER == "ours" else "hold_latest")
+    if execution == "tracked_plan_with_watchdog" and cfg.CONTROLLER != "ours":
+        raise ValueError("tracked_plan_with_watchdog requires --controller ours")
+    follow_plan = execution == "tracked_plan_with_watchdog"
     replay_config = None
     timings = None
     if args.timings_from:

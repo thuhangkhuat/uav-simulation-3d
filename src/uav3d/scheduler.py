@@ -30,6 +30,9 @@ def next_release(completed, released, period):
 
 
 SCHEDULES = ("parallel", "sequential")
+# How a delivered result drives the aircraft. "tracked_plan_with_watchdog" is the
+# adapter safety layer for "ours"; "hold_latest" holds upstream's issued command.
+COMMAND_EXECUTIONS = ("tracked_plan_with_watchdog", "hold_latest")
 
 
 def scaled_delay(duration, ratio=1.):
