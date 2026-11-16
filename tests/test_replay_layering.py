@@ -122,7 +122,7 @@ def test_glyphs_follow_pose_and_heading():
     assert nose[1, 1] > nose[0, 1] and np.isclose(nose[0, 0], nose[1, 0])
     vehicle = VehicleGlyph(ax, "red", 2)
     vehicle.update([10, 20, 0], np.pi/2)
-    lights = vehicle._parts[-1][0]._vec[:3].T                                  # headlight vertices
+    lights = np.concatenate(vehicle.world[-1])                                 # headlight vertices
     assert np.all(lights[:, 1] > 20+2*2.0)                                      # front faces +Y
     t = np.linspace(0, 10, 101)
     track = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])

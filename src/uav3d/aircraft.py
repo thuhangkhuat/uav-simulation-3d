@@ -52,15 +52,20 @@ class _Glyph:
         def world(points):
             points = np.asarray(points, float)
             return rotation.apply(points.reshape(-1, 3)).reshape(points.shape) + position
+        # World geometry of each part, in _parts order (also handy for tests).
+        self.world = []
         for artist, local, kind in self._parts:
             local = extra.get(id(artist), local) if extra else local
             if kind == "poly":
-                artist.set_verts([world(face) for face in local])
+                placed = [world(face) for face in local]
+                artist.set_verts(placed)
             elif kind == "segments":
-                artist.set_segments([world(seg) for seg in local])
+                placed = [world(seg) for seg in local]
+                artist.set_segments(placed)
             else:
-                p = world(local)
-                artist.set_data_3d(p[:, 0], p[:, 1], p[:, 2])
+                placed = world(local)
+                artist.set_data_3d(placed[:, 0], placed[:, 1], placed[:, 2])
+            self.world.append(placed)
 
 
 class QuadcopterGlyph(_Glyph):
