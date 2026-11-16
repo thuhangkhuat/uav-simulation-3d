@@ -236,13 +236,75 @@ def _street(path, width, true_scale):
     return faces, colors
 
 
+def _clearance(points, rects, circles):
+    """Distance from each point (N, 2) to the nearest obstacle footprint."""
+    points = np.asarray(points, float).reshape(-1, 2)
+    d = np.full(len(points), np.inf)
+    for x, y, w, h in rects:
+        qx = np.abs(points[:, 0]-(x+w/2))-w/2
+        qy = np.abs(points[:, 1]-(y+h/2))-h/2
+        d = np.minimum(d, np.hypot(np.maximum(qx, 0), np.maximum(qy, 0))
+                       + np.minimum(np.maximum(qx, qy), 0))
+    for cx, cy, r in circles:
+        d = np.minimum(d, np.hypot(points[:, 0]-cx, points[:, 1]-cy)-r)
+    return d
+
+
+def street_network(track, rects, circles, bounds, width=12., spacing=120., seed=11):
+    """The target's track plus decoy side streets, so the road does not give
+    away the route. Every ~spacing metres along the track a branch (sometimes
+    two, a crossroads) leaves at a right angle, bends gently and runs 80-250 m;
+    it stops before any obstacle footprint (4 m clear beyond its half width) or
+    the map edge. Deterministic for a given track. Returns a list of polylines.
+    """
+    track = np.asarray(track, float)[:, :2]
+    if len(track) < 2:
+        return [track]
+    rng = np.random.default_rng(seed)
+    xmin, ymin, xmax, ymax = bounds
+    step = np.linalg.norm(np.diff(track, axis=0), axis=1)
+    arc = np.r_[0., np.cumsum(step)]
+    lines = [track]
+    clear = width/2+4.
+    for s0 in np.arange(spacing*.6, arc[-1]-20., spacing):
+        k = int(np.searchsorted(arc, s0))
+        k = min(max(k, 1), len(track)-2)
+        tangent = track[k+1]-track[k-1]
+        if np.linalg.norm(tangent) < 1e-6:
+            continue
+        tangent /= np.linalg.norm(tangent)
+        normal = np.array([-tangent[1], tangent[0]])
+        sides = [rng.choice([-1., 1.])]
+        if rng.random() < .35:
+            sides.append(-sides[0])                          # a crossroads
+        for side in sides:
+            heading = side*normal
+            bend = rng.uniform(-.006, .006)                    # rad per metre
+            length = rng.uniform(80., 250.)
+            points, p = [track[k].copy()], track[k].copy()
+            for travelled in np.arange(2., length, 2.):
+                angle = bend*2.
+                c, s_ = np.cos(angle), np.sin(angle)
+                heading = np.array([c*heading[0]-s_*heading[1], s_*heading[0]+c*heading[1]])
+                p = p+2.*heading
+                outside = not (xmin+clear <= p[0] <= xmax-clear and ymin+clear <= p[1] <= ymax-clear)
+                # Leave the main road first, then stop before any obstacle.
+                if outside or (travelled > width and _clearance(p, rects, circles)[0] < clear):
+                    break
+                points.append(p.copy())
+            if len(points) > 1 and np.linalg.norm(points[-1]-points[0]) > 2*width:
+                lines.append(np.array(points))
+    return lines
+
+
 def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None):
     """Draw concrete pavement, an optional street, buildings and trees.
 
     Display scale (default): large slabs and one large tree per circular
     obstacle stay legible on a kilometre-scale map. true_scale: 6 m slabs and
     each circular obstacle as a grove of life-size trees. street: a ground
-    track (e.g. the target's) drawn as a 12 m asphalt road with edge lines.
+    track (e.g. the target's) drawn as a 12 m asphalt road with edge lines,
+    plus decoy side streets (street_network) so the road hides the route.
     """
     xmin, ymin, xmax, ymax = bounds
     # Square concrete slabs; coarse on kilometre-scale maps to bound mesh
@@ -266,7 +328,12 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None)
             faces.append([(left, y, 0), (right, y, 0),
                           (right, top, 0), (left, top, 0)])
             colors.append(palette[(row*7+column*3) % len(palette)])
-    street_faces, street_colors = _street(street, 12., true_scale) if street is not None else ([], [])
+    street_faces, street_colors = [], []
+    if street is not None:
+        for line in street_network(street, rects, circles, bounds):
+            f, c = _street(line, 12., true_scale)
+            street_faces += f
+            street_colors += c
     # The camera always looks down on z=0. Draw paving first: averaging depths
     # of wide brick faces with tall obstacle faces can otherwise paint bricks
     # over trunks and lower walls, especially in the zoomed follow view.

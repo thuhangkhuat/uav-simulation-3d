@@ -121,3 +121,21 @@ def test_true_scale_grove_stays_inside_its_obstacle():
         assert points[:, 2].max() > .8*39.          # as tall as the obstacle column
         trunks = sum(1 for face, *_ in meshes if len(face) == 4)//8
         assert trunks >= 4 if radius > 15 else trunks >= 1   # a grove, not one tree
+
+
+def test_decoy_streets_avoid_obstacles_and_map_edges():
+    import numpy as np
+    from uav3d.scene import _clearance, street_network
+    t = np.linspace(0, 1, 400)
+    track = np.c_[100+800*t, 500+60*np.sin(6*t)]
+    rects, circles = [(300, 560, 40, 40), (600, 380, 50, 40)], [(450, 420, 15)]
+    lines = street_network(track, rects, circles, (0, 0, 1000, 1000))
+    assert np.allclose(lines[0], track)                      # the target's road comes first
+    branches = lines[1:]
+    assert len(branches) >= 4
+    for b in branches:
+        assert np.all((b >= 0) & (b <= 1000))
+        # Past the main road's width, every branch keeps 4 m beyond its half width.
+        assert _clearance(b[7:], rects, circles).min() >= 10-1e-9
+    again = street_network(track, rects, circles, (0, 0, 1000, 1000))
+    assert all(np.array_equal(a, b) for a, b in zip(lines, again))   # deterministic
