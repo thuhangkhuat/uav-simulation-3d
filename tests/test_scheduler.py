@@ -210,3 +210,12 @@ def test_cli_forwards_target_speed_cap():
     assert command[command.index("--target-speed-cap")+1] == "9.0"
     with pytest.raises(SystemExit):
         main(["run","--target-speed-cap","0","--out","runs/never-created"])
+
+
+def test_cli_forwards_start_jitter():
+    from uav3d.cli import parser, worker_command
+    command = worker_command(parser().parse_args(["run","--start-jitter","20","--jitter-key","scen1"]),
+                             "ours","runs/x")
+    assert command[command.index("--start-jitter")+1] == "20.0"
+    assert command[command.index("--jitter-key")+1] == "scen1"
+    assert "--start-jitter" not in worker_command(parser().parse_args(["run"]),"ours","runs/x")

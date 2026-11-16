@@ -97,3 +97,11 @@ def test_follow_preserves_scenery_geometry_across_frames():
             np.testing.assert_allclose(projected[:2], (0, 0), atol=1e-12)
     finally:
         plt.close(fig)
+
+
+def test_replay_preview_options_parse():
+    from uav3d.cli import parser
+    args = parser().parse_args(["replay","runs/x","--out","p.gif","--start","232","--end","236","--draft"])
+    assert (args.start,args.end,args.draft) == (232.,236.,True)
+    args = parser().parse_args(["replay","runs/x"])
+    assert args.start is None and args.end is None and not args.draft

@@ -85,7 +85,7 @@ def overlay_scenario(scenario, params, directory, target_speed_cap=None):
 
 
 def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_dir=None,
-         target_speed_cap=None):
+         target_speed_cap=None, start_jitter=None, seed=0, jitter_key=None):
     if "config" in sys.modules:
         raise RuntimeError("Use a fresh process for each scenario/controller experiment")
     merged = {}
@@ -112,6 +112,18 @@ def load(scenario="scen1", controller="ours", drones=None, params=None, overlay_
         raise ValueError("3D adapter requires the upstream parametric MPC backend")
     world = CollisionWorld(cfg.RECTANGLE_OBSTACLES, cfg.OBSTACLES,
                            cfg.WORLD_BOUNDS, cfg.ROBOT_RADIUS)
+    if start_jitter:
+        # Upstream main.jitter_starts moves cfg.STARTS/GOALS/SCENARIO_DEF in place,
+        # with its own RNG seeded by (seed, crc32(scenario name)). jitter_key replaces
+        # only that name, so an adapter scenario file (e.g. scen1_3d_m3) can draw the
+        # same starts as upstream's 2D runs of `scen1` for the same seed.
+        import main as upstream_main
+        saved = upstream_main.SCENARIO_NAME
+        upstream_main.SCENARIO_NAME = jitter_key or cfg.SCENARIO_NAME
+        try:
+            upstream_main.jitter_starts(float(start_jitter), int(seed))
+        finally:
+            upstream_main.SCENARIO_NAME = saved
     starts = cfg.STARTS.copy()
     if drones is not None and drones != len(starts):
         if drones != 9 or len(starts) != 5:

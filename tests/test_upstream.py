@@ -139,3 +139,26 @@ def test_adapter_scenario_copy_reproduces_scen1_and_can_be_edited(tmp_path):
     data = yaml.safe_load(copy.read_text()); data["params"]["CORRIDOR_MARGIN"] = 2.8
     edited.write_text(yaml.safe_dump(data))
     assert run(str(edited))[5] == 2.8 and base[5] < 1.0
+
+
+def test_start_jitter_uses_upstream_and_its_seed_key():
+    import json, subprocess, sys
+    probe = ("from uav3d import upstream;import json;"
+             "cfg,_,s=upstream.load(%r,'ours',None,None,None,None,%r,%d,%r);"
+             "print(json.dumps([s.tolist(),cfg.SCENARIO_DEF['starts']]))")
+    def starts(scenario, jitter, seed, key):
+        out = subprocess.run([sys.executable,"-c",probe % (scenario,jitter,seed,key)],
+                             capture_output=True,text=True,check=True).stdout
+        s, recorded = json.loads(out)
+        assert s == recorded                       # SCENARIO_DEF follows, as in upstream
+        return s
+    from uav3d.upstream import ROOT
+    copy = str(ROOT/"scenarios"/"scen1_3d.yaml")
+    base = starts("scen1",None,1,None)
+    a = starts("scen1",20.0,1,None)
+    assert a != base and a == starts("scen1",20.0,1,None)          # moved, reproducible
+    assert starts(copy,20.0,1,"scen1") == a                        # keyed like upstream scen1
+    assert starts(copy,20.0,1,None) != a                           # own name: other draws
+    assert starts("scen1",20.0,2,None) != a                        # other seed
+    import numpy as np
+    assert np.linalg.norm(np.array(a)[:,:2]-np.array(base)[:,:2],axis=1).max() <= 20+1e-9

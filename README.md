@@ -48,6 +48,8 @@ uv run uav3d replay runs/ours-demo --out exports/ours.mp4 --speed 5 --fps 24
 # Follow the target at 4× magnification, or restore the full-map view.
 uv run uav3d replay runs/ours-demo --out exports/closeup.mp4 --zoom 4
 uv run uav3d replay runs/ours-demo --out exports/overview.mp4 --camera overview
+# Quick preview of a few seconds: a time range, low resolution, GIF needs no FFmpeg.
+uv run uav3d replay runs/ours-demo --out exports/preview.gif --start 232 --end 236 --speed 1 --fps 10 --draft
 
 # Reuse a run's measured command delays; keep all experiment options identical.
 uv run uav3d run --duration 10 --timings-from runs/ours-demo --out runs/ours-repeated
@@ -62,6 +64,8 @@ uv run uav3d run --physics ideal --duration 10 --out runs/ours-ideal
 uv run uav3d run --speed-guard on --duration 10 --out runs/ours-speed-guard
 # Override upstream config constants through a scenario overlay (dicts merge).
 uv run uav3d run --param 'IPOPT_OPTIONS={ipopt.max_iter: 100}' --duration 10 --out runs/ours-iter100
+# Upstream's start jitter (main.py --start-jitter), same draws as its 2D scen1 runs.
+uv run uav3d run --scenario scenarios/scen1_3d_m3.yaml --seed 3 --start-jitter 20 --jitter-key scen1 --out runs/ours-s3
 # Scenario variant: lower target segments faster than 9 m/s (scen1 has 13 m/s ones).
 uv run uav3d run --target-speed-cap 9 --duration 10 --out runs/ours-tcap9
 ```
@@ -86,6 +90,12 @@ it, so upstream applies them before computing its derived parameters (e.g.
 `CORRIDOR_MARGIN` follows `VMAX`). Dict values such as `IPOPT_OPTIONS` merge
 into the scenario's or `config.py`'s value. `config.json` records
 `param_overrides`; without `--param` upstream loads its own file unchanged.
+`--start-jitter M` calls upstream `main.jitter_starts(M, seed)` after loading
+the scenario: every start moves up to `M` m (kept clear of obstacles and other
+starts), with upstream's own RNG seeded by `--seed` and the scenario name.
+`--jitter-key NAME` seeds it with another name, e.g. `scen1` for an adapter
+scenario file, reproducing the starts of upstream's 2D `scen1` runs for the
+same seed. `config.json` records `start_jitter`, `jitter_key` and the starts.
 `--target-speed-cap V` uses the same overlay to lower every target segment
 speed above `V` (and `tar_max_speed`, if higher) to `V`; waypoints and slower
 segments are kept, so the target trajectory and mission get slightly longer
@@ -336,9 +346,13 @@ are percentages; coverage efficiency is in `[0,1]`. Metrics count executed
 planning calls, including a pending call that completes after termination.
 Errors and interrupted runs are labeled, not presented as successful missions.
 
-Replay reads these artifacts without importing planners. Quadcopter glyphs with
-colored bodies, four rotor rings, and white nose stripes follow recorded attitude
-and are enlarged for field-scale visibility; the vertical display aspect is also
+Replay reads these artifacts without importing planners. X-frame quadcopter
+glyphs (hub in the UAV colour, white front motors, translucent rotor discs with
+propellers that spin with mission time, white nose stripe) follow recorded
+attitude and are enlarged for field-scale visibility. The target is a red ground
+vehicle yawed to its direction of travel (from its motion over ±0.5 s; it keeps
+its heading while stopped), drawn below the aircraft and hidden by scenery like
+them; the vertical display aspect is also
 exaggerated when needed, with its scale factor labeled. Aircraft
 positions, target, footprints, and obstacles use their recorded coordinates.
 The default camera follows the recorded target at 3× magnification with a
@@ -350,7 +364,7 @@ change the trajectory or simulation.
 The scenery viewport fills the entire output frame without stretching the map;
 the title sits on an opaque white overlay at the top and the UAV legend sits
 below it. World axes and their labels are hidden for a clean video frame.
-MP4 export uses an environment-managed FFmpeg binary. Replay uses dark gray
+MP4 export uses an environment-managed FFmpeg binary (PNG export does not need it). Replay uses dark gray
 running-bond brick paving and buildings on rectangular obstacle footprints
 with framed glass, entrances, parapets, and rooftop solar panels,
 plus branched trees with irregular, directionally shaded leaf clusters within

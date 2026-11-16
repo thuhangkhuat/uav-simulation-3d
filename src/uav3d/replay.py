@@ -135,15 +135,19 @@ def render(args):
     from matplotlib.animation import FuncAnimation, FFMpegWriter
     from matplotlib.patches import Rectangle
     from .scene import draw_city, occluder_bounds
-    from .aircraft import QuadcopterGlyph
-    import imageio_ffmpeg
+    from matplotlib.patches import Patch
+    from .aircraft import QuadcopterGlyph, VehicleGlyph, headings
     directory = Path(args.directory)
     cfg = json.loads((directory/"config.json").read_text())
     with np.load(directory/"trajectory.npz") as archive:
         times,states,targets = (archive[k].copy() for k in ("time","aircraft","target"))
     output = Path(args.out or directory/"replay.png")
-    if output.suffix.lower() not in (".png",".mp4"):
-        raise ValueError("Replay output must end in .png or .mp4")
+    if output.suffix.lower() not in (".png",".mp4",".gif"):
+        raise ValueError("Replay output must end in .png, .mp4 or .gif")
+    start = 0. if getattr(args,"start",None) is None else float(args.start)
+    end = float(times[-1]) if getattr(args,"end",None) is None else min(float(args.end),float(times[-1]))
+    if output.suffix.lower()!=".png" and not 0 <= start < end:
+        raise ValueError(f"Video range must satisfy 0 <= start < end <= {times[-1]:.2f} s")
     output.parent.mkdir(parents=True,exist_ok=True)
     fig = plt.figure(figsize=(12,8),facecolor="#f3f5f9")
     # Explicit layers: ground, depth-sorted obstacles, then aircraft overlays.
@@ -187,8 +191,10 @@ def render(args):
         # Long square edges are split so an obstacle can hide part of one.
         footprints.append(DepthSplitLine(ax,segment=half/8,color=colors[i],lw=.8,alpha=.6))
     target_line = DepthSplitLine(ax,color="#f1f5f9",ls="--",lw=1)
-    target_marker = DepthSplitLine(ax,marker="*",color="#dc2626",ms=12,ls="none")
-    ax.legend(handles=[trail.front for trail in trails],
+    # The target is drawn as a ground vehicle facing its direction of travel.
+    vehicle = VehicleGlyph(ax, "#dc2626", .5*glyph)
+    target_heading = headings(targets, times)
+    ax.legend(handles=[trail.front for trail in trails]+[Patch(color="#dc2626",label="Target")],
               loc="upper left", bbox_to_anchor=(.008, .915), fontsize=8)
     square = np.array([[-half,-half,0],[half,-half,0],[half,half,0],[-half,half,0],[-half,-half,0]])
     def update(t):
@@ -206,12 +212,14 @@ def render(args):
             # Keep the newest sample so the trail reaches the aircraft.
             trails[i].update(np.r_[states[:index:stride,i,:3], s[None,i,:3]],
                              projection, boxes)
-            aircraft[i].update(s[i,:3], s[i,6:10])
+            aircraft[i].update(s[i,:3], s[i,6:10], times[index])
             aircraft[i].set_layer(*((HIDDEN_LAYER, .01) if hidden[i] else (0., 1.)))
             footprints[i].update(square+np.r_[s[i,:2],.05], projection, boxes)
         target_line.update(np.r_[targets[:index:stride], targets[None,index]],
                            projection, boxes)
-        target_marker.update(targets[index,None,:], projection, boxes)
+        vehicle.update(np.r_[targets[index,:2],0.], target_heading[index])
+        vehicle.set_layer(*((HIDDEN_LAYER, .01) if occluded(projection, np.r_[targets[index,:2],1.],
+                                                          boxes)[0] else (0., 1.)))
         camera_label = f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera"
         title.set_text(f"{cfg['scenario']} · {cfg['controller']} · {n} UAVs · t = {times[index]:.3f} s\n"
                        f"{camera_label} · enlarged aircraft glyphs · vertical display scale ×{scale:.1f}")
@@ -220,9 +228,21 @@ def render(args):
         update(times[-1] if args.time is None else args.time)
         fig.savefig(output,dpi=180)
     else:
-        matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
-        frames = np.r_[np.arange(0,times[-1],args.speed/args.fps),times[-1]]
+        frames = np.r_[np.arange(start,end,args.speed/args.fps),end]
         animation = FuncAnimation(fig,update,frames=frames,interval=1000/args.fps,blit=False)
+    draft = getattr(args,"draft",False)
+    if output.suffix.lower()==".gif":
+        from matplotlib.animation import PillowWriter
+        # GIF previews: Pillow only, no FFmpeg; low resolution keeps files small.
+        animation.save(output, dpi=60 if draft else 100, writer=PillowWriter(fps=args.fps))
+    elif output.suffix.lower()==".mp4" and draft:
+        import imageio_ffmpeg
+        matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
+        animation.save(output, dpi=100, writer=FFMpegWriter(
+            fps=args.fps, codec="libx264", extra_args=["-crf", "23", "-pix_fmt", "yuv420p"]))
+    elif output.suffix.lower()==".mp4":
+        import imageio_ffmpeg
+        matplotlib.rcParams["animation.ffmpeg_path"] = imageio_ffmpeg.get_ffmpeg_exe()
         # Supersample smoothed mesh faces, then filter to the delivery resolution.
         # Direct rasterization makes subpixel window mullions jump between pixel
         # columns during camera pans. Matching edge strokes seal facade tiles;

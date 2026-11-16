@@ -9,12 +9,15 @@
 #   bash scripts/run_scen_variants.sh bench-check  # 2 s smoke run of all five methods
 #   bash scripts/run_scen_variants.sh bench-r0     # r = 0, five methods in parallel
 #   bash scripts/run_scen_variants.sh bench-r1     # r = 1, BENCH_REPS benchmarks, one at a time
+#   bash scripts/run_scen_variants.sh bench-seeds  # r = 1, one benchmark per seed with the 2D
+#        thesis starts: --seed k --start-jitter 20 --jitter-key scen1 (seed 7: no jitter)
 #
 # Run r0/r1 in the background so they survive an SSH disconnect, e.g.
 #   nohup bash scripts/run_scen_variants.sh r1 > logs/scen-variants-r1.log 2>&1 &
 # Existing run directories are skipped, so an interrupted r1 batch can be resumed.
 # Environment overrides: VARIANTS="scen1_3d_m2 ..." REPS=3 CONTROLLER=ours
 #                        SCEN=scen1_3d_m3 BENCH_REPS=5 CONTROLLERS="ours apf ..."
+#                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1
 set -u
 cd "$(dirname "$0")/.."
 
@@ -24,6 +27,10 @@ CONTROLLER=${CONTROLLER:-ours}
 SCEN=${SCEN:-scen1_3d_m3}
 BENCH_REPS=${BENCH_REPS:-5}
 CONTROLLERS=${CONTROLLERS:-"ours apf pure_mpc cbf_qp_lag impc_ob_rec"}
+SEEDS=${SEEDS:-"1 2 3 4 5 6 7 8 9 10"}
+JITTER=${JITTER:-20}
+NOMINAL_SEEDS=${NOMINAL_SEEDS:-7}       # thesis_10seeds: seed 7 keeps the nominal starts
+RATIO=${RATIO:-1}
 # Identical for every method: upstream commands held until the next one, attitude
 # guard (default on) and speed guard at the plant, RotorPy.
 SETTINGS=(--speed-guard on --command-execution hold_latest)
@@ -87,6 +94,22 @@ case "${1:-}" in
             --controllers $CONTROLLERS --out "$out" > "logs/bench-$SCEN-r1-rep$k.log" 2>&1
         echo "$(date '+%F %T') done  $out (exit $?)"
     done ;;
+  bench-seeds)
+    # One benchmark per seed, the same starts as upstream's 2D thesis runs of scen1.
+    for k in $SEEDS; do
+        out=runs/seeds-$SCEN-r$RATIO/s$k
+        if [ -e "$out" ]; then echo "skip $out (exists)"; continue; fi
+        jitter=$JITTER
+        for n in $NOMINAL_SEEDS; do [ "$k" = "$n" ] && jitter=0; done
+        mkdir -p "runs/seeds-$SCEN-r$RATIO"
+        echo "$(date '+%F %T') start $out (jitter $jitter)  [load: $(cut -d' ' -f1-3 /proc/loadavg)]"
+        jarg=(); [ "$jitter" != 0 ] && jarg=(--start-jitter "$jitter" --jitter-key scen1)
+        # shellcheck disable=SC2086
+        uv run uav3d benchmark --scenario "scenarios/$SCEN.yaml" "${SETTINGS[@]}" --seed "$k" \
+            "${jarg[@]}" --compute-ratio "$RATIO" --controllers $CONTROLLERS --out "$out" \
+            > "logs/seeds-$SCEN-r$RATIO-s$k.log" 2>&1
+        echo "$(date '+%F %T') done  $out (exit $?)"
+    done ;;
   *)
-    sed -n '2,17p' "$0"; exit 2 ;;
+    sed -n '2,20p' "$0"; exit 2 ;;
 esac

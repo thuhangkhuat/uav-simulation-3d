@@ -42,6 +42,12 @@ def parser():
         q.add_argument("--target-speed-cap",type=float,default=None,metavar="V",
                        help="scenario overlay: lower every target segment faster than V m/s to V "
                             "(e.g. scen1's 13 m/s segments); other segments and waypoints unchanged")
+        q.add_argument("--start-jitter",type=float,default=None,metavar="M",
+                       help="move every start up to M m, exactly as upstream main.py --start-jitter "
+                            "(its jitter_starts, seeded by --seed and the scenario name)")
+        q.add_argument("--jitter-key",default=None,metavar="NAME",
+                       help="scenario name used to seed the start jitter (default: the loaded "
+                            "scenario's name); e.g. scen1 to match upstream's 2D scen1 runs")
         q.add_argument("--speed-guard",choices=SPEED_GUARDS,default="off",
                        help="on: plant-side limit keeping every aircraft below VMAX - 0.5 m/s "
                             "(lag-aware, same for all controllers); off (default)")
@@ -58,7 +64,8 @@ def parser():
     q.add_argument("directory")
     q = sub.add_parser("replay",help="offline 3D PNG/MP4 rendering; never runs planners")
     q.add_argument("directory")
-    q.add_argument("--out",help=".png or .mp4 output path; default: run/replay.png")
+    q.add_argument("--out",help=".png, .mp4 or .gif output path; default: run/replay.png "
+                                "(.gif needs no FFmpeg: handy for quick local previews)")
     q.add_argument("--time",type=float,default=None,help="mission time for PNG; default: final recorded time")
     q.add_argument("--fps",type=int,default=24)
     q.add_argument("--speed",type=float,default=1.,help="mission seconds per video second")
@@ -66,6 +73,10 @@ def parser():
                    help="follow the target (default) or show the full map")
     q.add_argument("--zoom",type=float,default=3.,
                    help="follow camera magnification relative to the full map (default: 3)")
+    q.add_argument("--start",type=float,default=None,help="video: first mission second (default: 0)")
+    q.add_argument("--end",type=float,default=None,help="video: last mission second (default: run end)")
+    q.add_argument("--draft",action="store_true",
+                   help="video: fast low-resolution preview (no 3x supersampling)")
     return p
 
 
@@ -81,7 +92,8 @@ def worker_command(args, controller, output):
                "--out",str(output)]
     for item in getattr(args,"param",None) or ():
         command += ["--param",item]
-    for name in ("drones","duration","timings_from","command_execution","target_speed_cap"):
+    for name in ("drones","duration","timings_from","command_execution","target_speed_cap",
+                 "start_jitter","jitter_key"):
         value = getattr(args,name)
         if value is not None:
             command += ["--"+name.replace("_","-"),str(value)]

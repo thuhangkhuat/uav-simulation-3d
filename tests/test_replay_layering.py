@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from uav3d import scene
-from uav3d.aircraft import QuadcopterGlyph
+from uav3d.aircraft import QuadcopterGlyph, VehicleGlyph
 from uav3d.replay import (HIDDEN_LAYER, DepthSplitLine, TargetFollowAxes,
                           follow_camera, occluded, view_directions)
 
@@ -62,7 +62,14 @@ def test_split_line_and_glyph_change_layers():
     glyph.set_layer(HIDDEN_LAYER, .01)
     assert all(artist.get_zorder() < 1 for artist, _ in glyph._layers)
     glyph.set_layer()
-    assert [a.get_zorder() for a, _ in glyph._layers] == [6, 5, 7, 8]
+    assert [a.get_zorder() for a, _ in glyph._layers] == [5, 6, 7, 8, 9, 10]
+    vehicle = VehicleGlyph(ax, "red", 2)
+    vehicle.set_layer(HIDDEN_LAYER, .01)
+    assert all(artist.get_zorder() < 1 for artist, _ in vehicle._layers)
+    vehicle.set_layer()
+    # The target vehicle draws above the scenery but below every aircraft part.
+    assert 1 < min(a.get_zorder() for a, _ in vehicle._layers)
+    assert max(a.get_zorder() for a, _ in vehicle._layers) < min(z for _, z in glyph._layers)
     plt.close(fig)
 
 
@@ -101,3 +108,27 @@ def test_hidden_trail_is_covered_by_building_pixels(proj_type):
     # beneath; a trail painted on top would change the whole overlap band.
     changed = np.abs(actual - reference)[overlap].max(axis=1) > 3
     assert changed.mean() < .1
+
+
+def test_glyphs_follow_pose_and_heading():
+    from uav3d.aircraft import headings
+    fig, ax = axes("ortho")
+    glyph = QuadcopterGlyph(ax, "red", 2)
+    glyph.update([100, 200, 30], [0, 0, 0, 1], t=1.)
+    nose = np.array(glyph.indicator.get_data_3d()).T
+    assert np.allclose(nose[:, 2], 30+2*.23) and nose[1, 0] > nose[0, 0]       # nose along +X
+    glyph.update([100, 200, 30], [0, 0, np.sin(np.pi/4), np.cos(np.pi/4)])  # yaw +90 deg
+    nose = np.array(glyph.indicator.get_data_3d()).T
+    assert nose[1, 1] > nose[0, 1] and np.isclose(nose[0, 0], nose[1, 0])
+    vehicle = VehicleGlyph(ax, "red", 2)
+    vehicle.update([10, 20, 0], np.pi/2)
+    lights = vehicle._parts[-1][0]._vec[:3].T                                  # headlight vertices
+    assert np.all(lights[:, 1] > 20+2*2.0)                                      # front faces +Y
+    t = np.linspace(0, 10, 101)
+    track = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    track[60:] = track[60]                                                      # stops at t = 6 s
+    h = headings(track, t)
+    assert np.allclose(h, 0)                                                     # keeps heading when stopped
+    track[:, :2] = np.column_stack([np.zeros_like(t), -t])
+    assert np.allclose(headings(track, t), -np.pi/2)
+    plt.close(fig)

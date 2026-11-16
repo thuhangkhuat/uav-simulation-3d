@@ -148,7 +148,9 @@ def run(args):
     params = parse_params(getattr(args,"param",None))
     speed_cap = getattr(args,"target_speed_cap",None)
     cfg,world,starts = upstream.load(args.scenario,args.controller,args.drones,
-                                     params,out/"scenario_overlay",speed_cap)
+                                     params,out/"scenario_overlay",speed_cap,
+                                     getattr(args,"start_jitter",None),args.seed,
+                                     getattr(args,"jitter_key",None))
     issues = cfg.validate_config()
     for level,message in issues:
         if level != "INFO":
@@ -218,6 +220,8 @@ def run(args):
                          compute_ratio=ratio,
                          param_overrides=params or None,
                          target_speed_cap=speed_cap,
+                         start_jitter=getattr(args,"start_jitter",None),
+                         jitter_key=getattr(args,"jitter_key",None),
                          attitude_guard=guard_settings(guard_mode),
                          speed_guard=speed_guard,
                          plan_tracking=dict(kp=upstream.TRACK_KP,kd=upstream.TRACK_KD,
