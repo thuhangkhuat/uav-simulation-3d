@@ -1,0 +1,19 @@
+nohup: ignoring input
+2026-11-15 23:39:35 start runs/ours-scen1_3d_m2-r1-rep1  [load: 1.20 0.53 0.84]
+2026-11-16 00:21:15 done  runs/ours-scen1_3d_m2-r1-rep1: ours: completed, 749.000s mission, 2488.60s wall; runs/ours-scen1_3d_m2-r1-rep1
+2026-11-16 00:21:15 start runs/ours-scen1_3d_m2-r1-rep2  [load: 4.09 4.14 3.93]
+2026-11-16 00:58:28 done  runs/ours-scen1_3d_m2-r1-rep2: ours: completed, 749.000s mission, 2221.17s wall; runs/ours-scen1_3d_m2-r1-rep2
+2026-11-16 00:58:28 start runs/ours-scen1_3d_m2-r1-rep3  [load: 2.38 2.19 1.87]
+2026-11-16 01:35:27 done  runs/ours-scen1_3d_m2-r1-rep3: ours: completed, 749.000s mission, 2208.75s wall; runs/ours-scen1_3d_m2-r1-rep3
+2026-11-16 01:35:27 start runs/ours-scen1_3d_m3-r1-rep1  [load: 1.00 1.00 1.08]
+2026-11-16 02:12:10 done  runs/ours-scen1_3d_m3-r1-rep1: ours: completed, 749.000s mission, 2192.06s wall; runs/ours-scen1_3d_m3-r1-rep1
+2026-11-16 02:12:10 start runs/ours-scen1_3d_m3-r1-rep2  [load: 1.09 1.05 1.01]
+2026-11-16 02:49:01 done  runs/ours-scen1_3d_m3-r1-rep2: ours: completed, 749.000s mission, 2200.08s wall; runs/ours-scen1_3d_m3-r1-rep2
+2026-11-16 02:49:01 start runs/ours-scen1_3d_m3-r1-rep3  [load: 1.00 1.00 1.00]
+2026-11-16 03:25:41 done  runs/ours-scen1_3d_m3-r1-rep3: ours: completed, 749.000s mission, 2189.01s wall; runs/ours-scen1_3d_m3-r1-rep3
+2026-11-16 03:25:41 start runs/ours-scen1_3d_m2_tc9-r1-rep1  [load: 1.09 1.05 1.01]
+2026-11-16 03:26:00 done  runs/ours-scen1_3d_m2_tc9-r1-rep1: ours: collision, 5.255s mission, 17.23s wall; runs/ours-scen1_3d_m2_tc9-r1-rep1
+2026-11-16 03:26:00 start runs/ours-scen1_3d_m2_tc9-r1-rep2  [load: 1.07 1.05 1.01]
+2026-11-16 04:03:00 done  runs/ours-scen1_3d_m2_tc9-r1-rep2: ours: completed, 761.200s mission, 2209.26s wall; runs/ours-scen1_3d_m2_tc9-r1-rep2
+2026-11-16 04:03:00 start runs/ours-scen1_3d_m2_tc9-r1-rep3  [load: 1.00 1.00 1.00]
+2026-11-16 04:39:55 done  runs/ours-scen1_3d_m2_tc9-r1-rep3: ours: completed, 761.200s mission, 2204.44s wall; runs/ours-scen1_3d_m2_tc9-r1-rep3
