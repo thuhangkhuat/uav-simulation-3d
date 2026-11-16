@@ -123,19 +123,47 @@ def test_true_scale_grove_stays_inside_its_obstacle():
         assert trunks >= 4 if radius > 15 else trunks >= 1   # a grove, not one tree
 
 
-def test_decoy_streets_avoid_obstacles_and_map_edges():
+def test_street_grid_avoids_obstacles_and_has_no_dead_ends():
     import numpy as np
     from uav3d.scene import _clearance, street_network
     t = np.linspace(0, 1, 400)
-    track = np.c_[100+800*t, 500+60*np.sin(6*t)]
-    rects, circles = [(300, 560, 40, 40), (600, 380, 50, 40)], [(450, 420, 15)]
-    lines = street_network(track, rects, circles, (0, 0, 1000, 1000))
+    track = np.c_[150+700*t, 500+60*np.sin(6*t)]
+    rects, circles = [(300, 560, 40, 40), (600, 380, 50, 40), (420, 150, 60, 60)], [(450, 420, 15)]
+    bounds = (0, 0, 1000, 1000)
+    lines = street_network(track, rects, circles, bounds)
     assert np.allclose(lines[0], track)                      # the target's road comes first
-    branches = lines[1:]
-    assert len(branches) >= 4
-    for b in branches:
-        assert np.all((b >= 0) & (b <= 1000))
-        # Past the main road's width, every branch keeps 4 m beyond its half width.
-        assert _clearance(b[7:], rects, circles).min() >= 10-1e-9
-    again = street_network(track, rects, circles, (0, 0, 1000, 1000))
+    assert len(lines) >= 6
+    for line in lines[1:]:
+        line = np.asarray(line)
+        assert np.all((line >= 0) & (line <= 1000))
+        dense = np.concatenate([np.linspace(a, b, 20) for a, b in zip(line[:-1], line[1:])])
+        assert _clearance(dense, rects, circles).min() >= 10-1e-9     # 4 m beyond half the width
+    # Every road end (target road included) meets another road or the map edge.
+    def dense(l):
+        l = np.asarray(l, float)
+        return np.concatenate([np.linspace(a, b, int(np.ceil(np.linalg.norm(b-a)))+2)
+                               for a, b in zip(l[:-1], l[1:])])
+    pts = [dense(l) for l in lines]
+    for i, line in enumerate(lines):
+        others = np.concatenate([p for k, p in enumerate(pts) if k != i])
+        for end in (np.asarray(line)[0], np.asarray(line)[-1]):
+            at_edge = min(end[0], 1000-end[0], end[1], 1000-end[1]) < 11
+            assert at_edge or np.sqrt(((others-end)**2).sum(1)).min() < 1.5
+    again = street_network(track, rects, circles, bounds)
     assert all(np.array_equal(a, b) for a, b in zip(lines, again))   # deterministic
+
+
+def test_avenues_cross_the_map_edge_to_edge():
+    import numpy as np
+    from uav3d.scene import _clearance, street_network
+    t = np.linspace(0, 1, 400)
+    track = np.c_[150+700*t, 500+60*np.sin(6*t)]
+    rects, circles = [(300, 560, 40, 40), (600, 380, 50, 40)], [(450, 420, 15)]
+    lines = street_network(track, rects, circles, (0, 0, 1000, 1000), avenues=2)
+    curved = [np.asarray(l) for l in lines[1:]
+              if len(l) > 2 and not (np.ptp(np.asarray(l)[:, 0]) < 1e-6 or np.ptp(np.asarray(l)[:, 1]) < 1e-6)]
+    assert len(curved) >= 2                                   # avenues besides the target's road
+    for a in curved[-2:]:
+        for end in (a[0], a[-1]):                              # both ends on the map edge
+            assert min(end[0], 1000-end[0], end[1], 1000-end[1]) < 1e-6
+        assert _clearance(a, rects, circles).min() >= 10-1e-9

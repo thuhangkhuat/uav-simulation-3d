@@ -390,10 +390,17 @@ frames carry no text by default; `--annotate` adds a title band (scenario,
 method, time, camera) and the legend. World axes and their labels are hidden for a clean video frame.
 MP4 export uses an environment-managed FFmpeg binary (PNG export does not need it). Replay uses light
 concrete pavement, a 12 m asphalt street with white edge lines along the
-target's recorded track (the dashed target path runs down its middle) with
-decoy side streets every ~120 m (some crossroads, 80-250 m long, stopping 4 m
-before obstacles and map edges; deterministic) so the road network does not
-reveal the route, and
+target's recorded track (the dashed target path runs down its middle) inside
+a grid of north-south and east-west through streets every ~140 m and three
+long, gently curving avenues running diagonally across the map from edge to
+edge (steering round obstacles, crossing the grid, dropped if they would run
+alongside another road), so the target's road is not the only curved one and
+the road network does not reveal the route. Grid streets keep 4 m beyond their half
+width from every obstacle; each free stretch keeps only the part between its
+outermost junctions (another street, the target's road, or the map edge), so
+nothing dead-ends; the target's road is joined to the network at both ends;
+streets reaching the map edge run on to the edge of the pavement; edge lines
+break at junctions. Deterministic. Then come
 buildings on rectangular obstacle footprints
 with framed glass, entrances, parapets, and rooftop solar panels,
 plus branched trees with irregular, directionally shaded leaf clusters within

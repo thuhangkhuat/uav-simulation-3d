@@ -240,61 +240,190 @@ def _clearance(points, rects, circles):
     """Distance from each point (N, 2) to the nearest obstacle footprint."""
     points = np.asarray(points, float).reshape(-1, 2)
     d = np.full(len(points), np.inf)
-    for x, y, w, h in rects:
-        qx = np.abs(points[:, 0]-(x+w/2))-w/2
-        qy = np.abs(points[:, 1]-(y+h/2))-h/2
-        d = np.minimum(d, np.hypot(np.maximum(qx, 0), np.maximum(qy, 0))
-                       + np.minimum(np.maximum(qx, qy), 0))
-    for cx, cy, r in circles:
-        d = np.minimum(d, np.hypot(points[:, 0]-cx, points[:, 1]-cy)-r)
+    if len(rects):
+        r = np.asarray(rects, float).reshape(-1, 4)
+        qx = np.abs(points[:, None, 0]-(r[None, :, 0]+r[None, :, 2]/2))-r[None, :, 2]/2
+        qy = np.abs(points[:, None, 1]-(r[None, :, 1]+r[None, :, 3]/2))-r[None, :, 3]/2
+        inside = np.minimum(np.maximum(qx, qy), 0)
+        d = np.minimum(d, (np.hypot(np.maximum(qx, 0), np.maximum(qy, 0))+inside).min(axis=1))
+    if len(circles):
+        c = np.asarray(circles, float).reshape(-1, 3)
+        d = np.minimum(d, (np.hypot(points[:, None, 0]-c[None, :, 0], points[:, None, 1]-c[None, :, 1])
+                           - c[None, :, 2]).min(axis=1))
     return d
 
 
-def street_network(track, rects, circles, bounds, width=12., spacing=120., seed=11):
-    """The target's track plus decoy side streets, so the road does not give
-    away the route. Every ~spacing metres along the track a branch (sometimes
-    two, a crossroads) leaves at a right angle, bends gently and runs 80-250 m;
-    it stops before any obstacle footprint (4 m clear beyond its half width) or
-    the map edge. Deterministic for a given track. Returns a list of polylines.
+def street_network(track, rects, circles, bounds, width=12., spacing=140., avenues=3, seed=3):
+    """The target's track plus a grid of through streets, so the road network
+    does not give away the route.
+
+    North-south and east-west streets every `spacing` metres run across the
+    map, broken wherever they would come within 4 m (plus half the road width)
+    of an obstacle footprint. Each free stretch keeps only the part between its
+    outermost junctions (crossings with a kept street or the target's road, or
+    the map edge), repeated until nothing changes, so no street dead-ends.
+    Deterministic. Returns a list of polylines, the target's track first.
     """
     track = np.asarray(track, float)[:, :2]
+    xmin, ymin, xmax, ymax = bounds
+    clear = width/2+4.
+    step = 2.
+    lines = [track]
     if len(track) < 2:
-        return [track]
+        return lines
+    # Free stretches of each grid line: (axis, coordinate, lo, hi, lo_edge, hi_edge).
+    stretches = []
+    for axis, (c0, c1), (u0, u1) in ((0, (xmin, xmax), (ymin, ymax)), (1, (ymin, ymax), (xmin, xmax))):
+        span = c1-c0
+        for c in c0+np.arange(spacing/2, span, spacing):
+            u = np.arange(u0, u1+1e-9, step)
+            pts = np.c_[np.full_like(u, c), u] if axis == 0 else np.c_[u, np.full_like(u, c)]
+            free = _clearance(pts, rects, circles) >= clear
+            edges = np.flatnonzero(np.diff(np.r_[0, free.astype(int), 0]))
+            for lo, hi in zip(edges[::2], edges[1::2]-1):
+                if hi > lo:
+                    stretches.append([axis, c, u[lo], u[hi], lo == 0, hi == len(u)-1])
+
+    def track_crossings(axis, c, lo, hi):
+        # Positions along a grid line where the target's track crosses it.
+        v = track[:, axis]-c
+        out = []
+        for k in np.flatnonzero(np.sign(v[:-1])*np.sign(v[1:]) <= 0):
+            if v[k] == v[k+1]:
+                continue
+            f = v[k]/(v[k]-v[k+1])
+            pos = track[k, 1-axis]+f*(track[k+1, 1-axis]-track[k, 1-axis])
+            if lo <= pos <= hi:
+                out.append(pos)
+        return out
+
+    alive = [True]*len(stretches)
+    for _ in range(20):
+        changed = False
+        for i, (axis, c, lo, hi, lo_edge, hi_edge) in enumerate(stretches):
+            if not alive[i]:
+                continue
+            junctions = track_crossings(axis, c, lo, hi)
+            junctions += [lo] if lo_edge else []
+            junctions += [hi] if hi_edge else []
+            for j, (axis2, c2, lo2, hi2, _, _) in enumerate(stretches):
+                if alive[j] and axis2 != axis and lo <= c2 <= hi and lo2 <= c <= hi2:
+                    junctions.append(c2)
+            if len(junctions) < 2 or max(junctions)-min(junctions) < width:
+                alive[i] = False
+                changed = True
+                continue
+            new_lo, new_hi = min(junctions), max(junctions)
+            if (new_lo, new_hi) != (lo, hi):
+                stretches[i][2:6] = [new_lo, new_hi, lo_edge and new_lo == lo, hi_edge and new_hi == hi]
+                changed = True
+        if not changed:
+            break
+    for keep, (axis, c, lo, hi, _, _) in zip(alive, stretches):
+        if keep:
+            u = np.linspace(lo, hi, max(2, int(np.ceil((hi-lo)/6.))+1))
+            lines.append(np.c_[np.full_like(u, c), u] if axis == 0 else np.c_[u, np.full_like(u, c)])
+    # The target's road starts and ends mid-map: join each end to the nearest
+    # reachable point of a grid street (or the map edge) with a straight,
+    # obstacle-free connector, so the target's road does not dead-end either.
+    grid = np.concatenate(lines[1:]) if len(lines) > 1 else np.empty((0, 2))
+    for end in (track[0], track[-1]):
+        candidates = [np.array(p) for p in grid]
+        candidates += [np.array([xmin, end[1]]), np.array([xmax, end[1]]),
+                       np.array([end[0], ymin]), np.array([end[0], ymax])]
+        for goal in sorted(candidates, key=lambda q: np.linalg.norm(q-end)):
+            length = np.linalg.norm(goal-end)
+            if length < 1.:
+                break
+            samples = end+np.outer(np.arange(0., length, step)/length, goal-end)
+            if (_clearance(samples, rects, circles) >= clear).all():
+                lines.append(np.array([end, goal]))
+                break
+    lines += _avenues(lines, rects, circles, bounds, width, clear, avenues, seed)
+    return lines
+
+
+def _avenues(lines, rects, circles, bounds, width, clear, count, seed, tries=80):
+    """A few long, gently curving avenues across the map, so the target's road
+    is not the only curved one. Each runs diagonally to the grid from one map
+    edge to the opposite one, bending smoothly, steering round obstacles (keeping `clear` from them)
+    and crossing the grid; one that runs alongside another road (near it and
+    within ~25 degrees of parallel) for more than 3x the road width, cannot pass an obstacle, or does not reach the far edge
+    within twice the map size is dropped. Both ends lie on the map edge, so
+    they never dead-end. Deterministic."""
     rng = np.random.default_rng(seed)
     xmin, ymin, xmax, ymax = bounds
-    step = np.linalg.norm(np.diff(track, axis=0), axis=1)
-    arc = np.r_[0., np.cumsum(step)]
-    lines = [track]
-    clear = width/2+4.
-    for s0 in np.arange(spacing*.6, arc[-1]-20., spacing):
-        k = int(np.searchsorted(arc, s0))
-        k = min(max(k, 1), len(track)-2)
-        tangent = track[k+1]-track[k-1]
-        if np.linalg.norm(tangent) < 1e-6:
-            continue
-        tangent /= np.linalg.norm(tangent)
-        normal = np.array([-tangent[1], tangent[0]])
-        sides = [rng.choice([-1., 1.])]
-        if rng.random() < .35:
-            sides.append(-sides[0])                          # a crossroads
-        for side in sides:
-            heading = side*normal
-            bend = rng.uniform(-.006, .006)                    # rad per metre
-            length = rng.uniform(80., 250.)
-            points, p = [track[k].copy()], track[k].copy()
-            for travelled in np.arange(2., length, 2.):
-                angle = bend*2.
-                c, s_ = np.cos(angle), np.sin(angle)
-                heading = np.array([c*heading[0]-s_*heading[1], s_*heading[0]+c*heading[1]])
-                p = p+2.*heading
-                outside = not (xmin+clear <= p[0] <= xmax-clear and ymin+clear <= p[1] <= ymax-clear)
-                # Leave the main road first, then stop before any obstacle.
-                if outside or (travelled > width and _clearance(p, rects, circles)[0] < clear):
+    span = max(xmax-xmin, ymax-ymin)
+    step = 2.
+
+    def turn(h, a):
+        c, s_ = np.cos(a), np.sin(a)
+        return np.array([c*h[0]-s_*h[1], s_*h[0]+c*h[1]])
+
+    def resampled(line):
+        line = np.asarray(line, float)[:, :2]
+        arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))]
+        at = np.r_[np.arange(0., arc[-1], step), arc[-1]]
+        return np.c_[np.interp(at, arc, line[:, 0]), np.interp(at, arc, line[:, 1])]
+
+    existing = np.concatenate([resampled(l) for l in lines])
+    found = []
+    for _ in range(tries):
+        if len(found) >= count:
+            break
+        # Diagonal to the grid (about 30-45 degrees), so an avenue crosses grid
+        # streets instead of running along them: west edge, low -> east edge, high,
+        # or south edge, right -> north edge, left; alternating.
+        w, h = xmax-xmin, ymax-ymin
+        a0, a1 = rng.uniform(.05, .35), rng.uniform(.65, .95)
+        if len(found) % 2 == 0:
+            start, goal = np.array([xmin, ymin+a0*h]), np.array([xmax, ymin+a1*h])
+        else:
+            start, goal = np.array([xmin+a1*w, ymin]), np.array([xmin+a0*w, ymax])
+        heading = (goal-start)/np.linalg.norm(goal-start)
+        wave, phase = rng.uniform(250., 450.), rng.uniform(0, 2*np.pi)
+        amplitude = rng.uniform(.004, .008)                # rad per metre of curvature
+        path, p, ok = [start.copy()], start.copy(), False
+        for travelled in np.arange(step, 2*span, step):
+            # Smoothly varying curvature, pulled back towards the far edge.
+            to_goal = (goal-p)/max(np.linalg.norm(goal-p), 1e-9)
+            pull = np.arctan2(heading[0]*to_goal[1]-heading[1]*to_goal[0], heading@to_goal)
+            heading = turn(heading, amplitude*step*np.sin(2*np.pi*travelled/wave+phase) + .01*pull)
+            if _clearance(p+6.*heading, rects, circles)[0] < clear+2.:
+                for a in (.3, -.3, .6, -.6):
+                    if _clearance(p+6.*turn(heading, a), rects, circles)[0] >= clear+2.:
+                        heading = turn(heading, a)
+                        break
+                else:
                     break
-                points.append(p.copy())
-            if len(points) > 1 and np.linalg.norm(points[-1]-points[0]) > 2*width:
-                lines.append(np.array(points))
-    return lines
+            p = p+step*heading
+            if not (xmin <= p[0] <= xmax and ymin <= p[1] <= ymax):
+                if travelled > span/2:
+                    path.append(np.clip(p, (xmin, ymin), (xmax, ymax)))
+                    ok = True
+                break
+            path.append(p.copy())
+        if not ok:
+            continue
+        line = np.array(path)
+        # Reject one that runs alongside another road (merging asphalt): near
+        # another road AND nearly parallel to it (within ~25 degrees) for more
+        # than 3x the road width. Crossings at an angle are fine.
+        from scipy.spatial import cKDTree
+        tree = cKDTree(existing)
+        d, k = tree.query(line)
+        along = existing[np.minimum(k+1, len(existing)-1)]-existing[np.maximum(k-1, 0)]
+        along /= np.maximum(np.linalg.norm(along, axis=1, keepdims=True), 1e-9)
+        own = np.gradient(line, axis=0)
+        own /= np.maximum(np.linalg.norm(own, axis=1, keepdims=True), 1e-9)
+        parallel = (d < width) & (np.abs(np.sum(along*own, axis=1)) > np.cos(np.radians(25)))
+        flag = np.r_[0, parallel.astype(int), 0]
+        runs = np.flatnonzero(np.diff(flag) == -1)-np.flatnonzero(np.diff(flag) == 1)
+        if len(runs) and runs.max()*step > 3*width:
+            continue
+        found.append(line)
+        existing = np.concatenate([existing, resampled(line)])
+    return found
 
 
 def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None):
@@ -304,7 +433,7 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None)
     obstacle stay legible on a kilometre-scale map. true_scale: 6 m slabs and
     each circular obstacle as a grove of life-size trees. street: a ground
     track (e.g. the target's) drawn as a 12 m asphalt road with edge lines,
-    plus decoy side streets (street_network) so the road hides the route.
+    plus a grid of through streets (street_network) so the road hides the route.
     """
     xmin, ymin, xmax, ymax = bounds
     # Square concrete slabs; coarse on kilometre-scale maps to bound mesh
@@ -330,10 +459,40 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None)
             colors.append(palette[(row*7+column*3) % len(palette)])
     street_faces, street_colors = [], []
     if street is not None:
-        for line in street_network(street, rects, circles, bounds):
+        network = street_network(street, rects, circles, bounds)
+        # Streets that reach the map edge carry on to the edge of the pavement,
+        # so they leave the picture instead of stopping at the simulation bounds.
+        extended = [network[0]]
+        for line in network[1:]:
+            line = np.asarray(line, float)
+            for at, inward in ((0, 1), (-1, -2)):
+                end, before = line[at], line[inward]
+                on_edge = min(abs(end[0]-xmin), abs(end[0]-xmax), abs(end[1]-ymin), abs(end[1]-ymax)) < 1.
+                if on_edge and np.linalg.norm(end-before) > 1e-9:
+                    out = (end-before)/np.linalg.norm(end-before)
+                    far = end+out*apron
+                    line = np.vstack([far, line]) if at == 0 else np.vstack([line, far])
+            extended.append(line)
+        network = extended
+
+        def resampled(line, spacing=3.):
+            line = np.asarray(line, float)[:, :2]
+            arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))]
+            at = np.arange(0., arc[-1]+1e-9, spacing)
+            return np.c_[np.interp(at, arc, line[:, 0]), np.interp(at, arc, line[:, 1])]
+        centrelines = [resampled(line) for line in network]
+        for index, line in enumerate(network):
             f, c = _street(line, 12., true_scale)
-            street_faces += f
-            street_colors += c
+            # Break this road's edge lines where they cross another road.
+            others = [o for k, o in enumerate(centrelines) if k != index]
+            others = np.concatenate(others) if others else np.empty((0, 2))
+            for face, color in zip(f, c):
+                if color == "#e5e7eb" and len(others):
+                    centre = np.mean(np.asarray(face)[:, :2], axis=0)
+                    if np.min(np.sum((others-centre)**2, axis=1)) < (6.5)**2:
+                        continue
+                street_faces.append(face)
+                street_colors.append(color)
     # The camera always looks down on z=0. Draw paving first: averaging depths
     # of wide brick faces with tall obstacle faces can otherwise paint bricks
     # over trunks and lower walls, especially in the zoomed follow view.
