@@ -199,17 +199,55 @@ def _grove(meshes, x, y, radius, height, index):
                palette[(index+k) % len(palette)], sectors=8, bands=4)
 
 
-def draw_city(ax, bounds, rects, circles, height, true_scale=False):
-    """Draw brick paving, buildings, and trees from saved footprints.
+def _street(path, width, true_scale):
+    """Asphalt ribbon along a ground track, with white edge lines.
 
-    Display scale (default): coarse pavers and one large tree per circular
-    obstacle stay legible on a kilometre-scale map. true_scale: 4 m pavers and
-    each circular obstacle as a grove of life-size trees.
+    Returns (faces, colors): quads on z slightly above the pavement. The track
+    is resampled, and each joint uses the mean of its neighbouring segment
+    normals so consecutive quads meet without gaps on curves.
+    """
+    path = np.asarray(path, float)[:, :2]
+    step = 3. if true_scale else 6.
+    keep = [0]
+    for k in range(1, len(path)):
+        if np.linalg.norm(path[k]-path[keep[-1]]) >= step:
+            keep.append(k)
+    if keep[-1] != len(path)-1:
+        keep.append(len(path)-1)
+    points = path[keep]
+    if len(points) < 2:
+        return [], []
+    tangent = np.diff(points, axis=0)
+    tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+    seg_normal = np.c_[-tangent[:, 1], tangent[:, 0]]
+    normal = np.r_[seg_normal[:1], seg_normal[:-1]+seg_normal[1:], seg_normal[-1:]]
+    normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-9)
+    line = .25 if true_scale else 1.2
+    bands = [(-width/2, width/2, .02, "#2f3236"),                         # asphalt
+             (width/2-.6-line, width/2-.6, .04, "#e5e7eb"),               # edge lines
+             (-width/2+.6, -width/2+.6+line, .04, "#e5e7eb")]
+    faces, colors = [], []
+    for lo, hi, z, color in bands:
+        for k in range(len(points)-1):
+            a, b = points[k], points[k+1]
+            na, nb = normal[k], normal[k+1]
+            faces.append([(*(a+lo*na), z), (*(b+lo*nb), z), (*(b+hi*nb), z), (*(a+hi*na), z)])
+            colors.append(color)
+    return faces, colors
+
+
+def draw_city(ax, bounds, rects, circles, height, true_scale=False, street=None):
+    """Draw concrete pavement, an optional street, buildings and trees.
+
+    Display scale (default): large slabs and one large tree per circular
+    obstacle stay legible on a kilometre-scale map. true_scale: 6 m slabs and
+    each circular obstacle as a grove of life-size trees. street: a ground
+    track (e.g. the target's) drawn as a 12 m asphalt road with edge lines.
     """
     xmin, ymin, xmax, ymax = bounds
-    # Coarse pavers keep the bond visible on kilometre-scale overview maps and
-    # bound mesh complexity. Geometry and colors are deterministic across frames.
-    brick = 4. if true_scale else max(xmax-xmin, ymax-ymin)/48
+    # Square concrete slabs; coarse on kilometre-scale maps to bound mesh
+    # complexity. Geometry and colors are deterministic across frames.
+    brick = 6. if true_scale else max(xmax-xmin, ymax-ymin)/48
     # Extend the decorative floor on every side of the simulation domain.
     # A fixed world-span apron keeps paving under the panning camera near map
     # edges, including negative X/Y, without moving the world axes or obstacles.
@@ -217,22 +255,22 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False):
     ground_bounds = (xmin-apron, ymin-apron, xmax+apron, ymax+apron)
     gxmin, gymin, gxmax, gymax = ground_bounds
     faces, colors = [], []
-    palette = ["#414448", "#484b4f", "#3c3f43", "#4d5054", "#45484c"]
-    rows, columns = int(np.ceil(apron/brick)), int(np.ceil(apron/(2*brick)))
+    palette = ["#b9bdc1", "#b4b8bc", "#bec2c5", "#afb3b7", "#babdc0"]
+    rows = int(np.ceil(apron/brick))
     for row in range(-rows, int(np.ceil((ymax-ymin)/brick))+rows):
         y = ymin+row*brick
-        offset = brick if row % 2 else 0
-        for column in range(-columns, int(np.ceil((xmax-xmin+offset)/(2*brick)))+columns):
-            x = xmin-offset+column*2*brick
-            left, right = max(gxmin, x), min(gxmax, x+2*brick)
-            top = min(gymax, y+brick)
+        top = min(gymax, y+brick)
+        for column in range(-rows, int(np.ceil((xmax-xmin)/brick))+rows):
+            x = xmin+column*brick
+            left, right = max(gxmin, x), min(gxmax, x+brick)
             faces.append([(left, y, 0), (right, y, 0),
                           (right, top, 0), (left, top, 0)])
             colors.append(palette[(row*7+column*3) % len(palette)])
+    street_faces, street_colors = _street(street, 12., true_scale) if street is not None else ([], [])
     # The camera always looks down on z=0. Draw paving first: averaging depths
     # of wide brick faces with tall obstacle faces can otherwise paint bricks
     # over trunks and lower walls, especially in the zoomed follow view.
-    ground = Poly3DCollection([], edgecolors="#292c30", linewidths=.3 if true_scale else .45, zorder=0)
+    ground = Poly3DCollection([], edgecolors="#9da1a5", linewidths=.3 if true_scale else .45, zorder=0)
     ax.add_collection3d(ground, autolim=False)
     obstacles = []
     for index, (x, y, width, depth) in enumerate(rects):
@@ -246,6 +284,19 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False):
     # Smooth moving window edges; matching edge strokes seal adjacent tiles.
     scenery = Poly3DCollection([], zorder=1, antialiaseds=True, snap=False)
     ax.add_collection3d(scenery, autolim=False)
+    # Added after the scenery (collection order is relied on elsewhere); zorder
+    # still draws them first. The street lies on the pavement, below every hidden overlay (HIDDEN_LAYER).
+    # Asphalt and markings are separate layers: one depth-sorted collection
+    # would paint asphalt over the far edge line. Matching edge strokes seal
+    # the joints between asphalt quads.
+    road = Poly3DCollection([], linewidths=.5, zorder=.1)
+    ax.add_collection3d(road, autolim=False)
+    marks = Poly3DCollection([], edgecolors="none", linewidths=0, zorder=.15)
+    ax.add_collection3d(marks, autolim=False)
+    asphalt = np.array([c != "#e5e7eb" for c in street_colors], bool)
+    street_boxes = np.array([[np.min(np.asarray(f)[:, 0]), np.min(np.asarray(f)[:, 1]),
+                              np.max(np.asarray(f)[:, 0]), np.max(np.asarray(f)[:, 1])]
+                             for f in street_faces]).reshape(-1, 4)
 
     def clip_view(window):
         """Show only scenery inside window; mplot3d does not clip polygons.
@@ -265,6 +316,14 @@ def draw_city(ax, bounds, rects, circles, height, true_scale=False):
                 fills.append(color)
         ground.set_verts(kept)
         ground.set_facecolor(fills)
+        near = ((street_boxes[:, 2] >= x0) & (street_boxes[:, 0] <= x1) &
+                (street_boxes[:, 3] >= y0) & (street_boxes[:, 1] <= y1))
+        for layer, mask in ((road, near & asphalt), (marks, near & ~asphalt)):
+            chosen = np.flatnonzero(mask)
+            layer.set_verts([street_faces[k] for k in chosen])
+            layer.set_facecolor([street_colors[k] for k in chosen])
+            if layer is road:
+                layer.set_edgecolor([street_colors[k] for k in chosen])
         visible = [mesh for (left, bottom, right, top), meshes in obstacles
                    if x0 <= left and right <= x1 and y0 <= bottom and top <= y1
                    for mesh in meshes]

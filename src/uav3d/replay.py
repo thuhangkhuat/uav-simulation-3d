@@ -220,7 +220,7 @@ def render(args):
     height = max(5.,float(states[:,:,2].max())*1.3)
     clip_view = draw_city(ax, (xmin,ymin,xmax,ymax), cfg["scenario_definition"]["rects"],
                           cfg["scenario_definition"]["circles"], height,
-                          true_scale=getattr(args, "true_scale", False))
+                          true_scale=getattr(args, "true_scale", False), street=targets)
     # Largest obstacle footprint: a padded view window must contain any obstacle
     # that can reach into the frame, so obstacles never pop in or out.
     obstacle_extent = max([max(w, d) for _, _, w, d in cfg["scenario_definition"]["rects"]] +

@@ -357,7 +357,7 @@ attitude and are enlarged for field-scale visibility (about 22 m across on a
 `ROBOT_RADIUS` and the target as a 4.6 m car, without vertical exaggeration and
 with a default `--zoom 20`, a ~50 m nominal window; there each
 circular obstacle becomes a grove of life-size trees, 3.5-6 m crowns filling its
-disk and nearly as tall as the obstacle column, and pavers are 4 m). At true
+disk and nearly as tall as the obstacle column, and pavement slabs are 6 m). At true
 scale a 1 m aircraft is only ~0.9 px per zoom unit wide in a 1920 px video (~18
 px at zoom 20). `--camera team` centres the view midway between the aircraft (at
 altitude) and the target, so the formation stays in frame; `--uav-scale K` and
@@ -388,15 +388,17 @@ the obstacle height, keeping whole obstacles), which keeps frames fast.
 The scenery viewport fills the entire output frame without stretching the map;
 frames carry no text by default; `--annotate` adds a title band (scenario,
 method, time, camera) and the legend. World axes and their labels are hidden for a clean video frame.
-MP4 export uses an environment-managed FFmpeg binary (PNG export does not need it). Replay uses dark gray
-running-bond brick paving and buildings on rectangular obstacle footprints
+MP4 export uses an environment-managed FFmpeg binary (PNG export does not need it). Replay uses light
+concrete pavement, a 12 m asphalt street with white edge lines along the
+target's recorded track (the dashed target path runs down its middle), and
+buildings on rectangular obstacle footprints
 with framed glass, entrances, parapets, and rooftop solar panels,
 plus branched trees with irregular, directionally shaded leaf clusters within
 circular obstacle footprints. MP4s render at three times the output resolution
 then downsample to 1920 × 1280, smoothing fine window edges during camera pans.
-The paving extends one world span beyond every map edge, including negative X and Y, to keep ground
-visible around the origin and during camera tracking. Pavers are enlarged to
-remain visible at map scale. This decoration only affects replay: collision and
+The pavement extends beyond every map edge, including negative X and Y, to keep ground
+visible around the origin and during camera tracking. Slabs are enlarged to
+remain visible at map scale (6 m with `--true-scale`). This decoration only affects replay: collision and
 LiDAR still use the original vertical obstacle columns, including the space
 around tree trunks and above the decorative roofs/crowns. High-quality artistic
 rendering and a live viewer are outside v1. Aircraft glyphs, trails, FOV
