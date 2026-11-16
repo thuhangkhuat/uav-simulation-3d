@@ -48,8 +48,8 @@ uv run uav3d replay runs/ours-demo --out exports/ours.mp4 --speed 5 --fps 24
 # Follow the target at 4× magnification, or restore the full-map view.
 uv run uav3d replay runs/ours-demo --out exports/closeup.mp4 --zoom 4
 uv run uav3d replay runs/ours-demo --out exports/overview.mp4 --camera overview
-# Physical proportions: team view (zoom 40) and a close-up on UAV 3.
-uv run uav3d replay runs/ours-demo --out exports/team.mp4 --true-scale --start 225 --end 245
+# Physical scenery: the team in a ~50 m view (aircraft drawn 3x), and a close-up on UAV 3.
+uv run uav3d replay runs/ours-demo --out exports/team.mp4 --true-scale --camera team --uav-scale 3 --target-scale 0.6 --start 225 --end 245
 uv run uav3d replay runs/ours-demo --out exports/uav3.mp4 --true-scale --follow-uav 3 --start 2 --end 6
 # Quick preview of a few seconds: a time range, low resolution, GIF needs no FFmpeg.
 uv run uav3d replay runs/ours-demo --out exports/preview.gif --start 232 --end 236 --speed 1 --fps 10 --draft
@@ -355,11 +355,15 @@ propellers that spin with mission time, white nose stripe) follow recorded
 attitude and are enlarged for field-scale visibility (about 22 m across on a
 1000 m map, against `ROBOT_RADIUS` = 0.5 m; `--true-scale` draws them at
 `ROBOT_RADIUS` and the target as a 4.6 m car, without vertical exaggeration and
-with a default `--zoom 40` for a team view; there each
+with a default `--zoom 20`, a ~50 m nominal window; there each
 circular obstacle becomes a grove of life-size trees, 3.5-6 m crowns filling its
 disk and nearly as tall as the obstacle column, and pavers are 4 m). At true
-scale a 1 m aircraft is only ~0.9 px per zoom unit wide in a 1920 px video (~35
-px at zoom 40), so `--follow-uav I` gives a close-up: the camera follows UAV I
+scale a 1 m aircraft is only ~0.9 px per zoom unit wide in a 1920 px video (~18
+px at zoom 20). `--camera team` centres the view midway between the aircraft (at
+altitude) and the target, so the formation stays in frame; `--uav-scale K` and
+`--target-scale K` resize only the aircraft and vehicle drawings (positions,
+scenery and FOV squares stay true), e.g. `--true-scale --camera team --uav-scale
+3 --target-scale 0.6`. `--follow-uav I` gives a close-up: the camera follows UAV I
 (default `--zoom 100` with `--true-scale`, ~90 px) and looks down steeply
 (`--elevation`, default 80 degrees there, 55 for the target view). The followed
 UAV and its trail are always drawn on top, even beside a facade taller than its

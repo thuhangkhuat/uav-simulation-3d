@@ -166,14 +166,15 @@ def render(args):
     ax.set_box_aspect((xmax-xmin,ymax-ymin,display_z))
     ax.set_zticks(np.linspace(0,max_z,3))
     ax.view_init(elev=35,azim=-65)
-    following = getattr(args, "camera", "follow") == "follow"
+    camera = getattr(args, "camera", "follow")
+    following = camera in ("follow", "team")
     follow_uav = getattr(args, "follow_uav", None)
     if follow_uav is not None and not 0 <= follow_uav < states.shape[1]:
         raise ValueError(f"--follow-uav must be in 0..{states.shape[1]-1}")
     following = following or follow_uav is not None
     # Defaults: a team view (target-follow) or a close-up on one aircraft.
     zoom = getattr(args, "zoom", None) or (
-        (100. if true_scale else 8.) if follow_uav is not None else (40. if true_scale else 3.))
+        (100. if true_scale else 8.) if follow_uav is not None else (20. if true_scale else 3.))
     # Close-ups look down steeply: at 55 deg a facade taller than the flight
     # altitude hides an aircraft flying right beside it.
     elevation = getattr(args, "elevation", None)
@@ -212,6 +213,9 @@ def render(args):
         # Enlarge only the illustrations for field-scale readability.
         glyph = max(1.,(xmax-xmin)*.008)
         vehicle_scale = .25*glyph
+    # Optional size multipliers (illustration only; positions are unchanged).
+    glyph *= float(getattr(args, "uav_scale", None) or 1.)
+    vehicle_scale *= float(getattr(args, "target_scale", None) or 1.)
     half = cfg["params"]["VIEWING_RADIUS"]
     trails,aircraft,footprints = [],[],[]
     for i in range(n):
@@ -233,7 +237,14 @@ def render(args):
         s = states[index]
         # Set the camera first: occlusion is tested against this frame's view.
         if following:
-            centre = targets[index] if follow_uav is None else s[follow_uav,:3]
+            if follow_uav is not None:
+                centre = s[follow_uav,:3]
+            elif camera == "team":
+                # Midway between the aircraft (at altitude) and the target, so
+                # both the formation and the target stay in frame.
+                centre = (s[:,:3].mean(axis=0)+targets[index])/2
+            else:
+                centre = targets[index]
             scale, window = follow_camera(ax, centre, (xmin,ymin,xmax,ymax), max_z, zoom,
                                           exaggerate=not true_scale)
             # Draw only scenery near the view: the full city every frame is slow.
@@ -263,6 +274,7 @@ def render(args):
         vehicle.set_layer(*((HIDDEN_LAYER, .01) if occluded(projection, np.r_[targets[index,:2],1.],
                                                           boxes)[0] else (0., 1.)))
         camera_label = (f"UAV {follow_uav} close-up · zoom ×{zoom:g}" if follow_uav is not None else
+                        f"Team camera · zoom ×{zoom:g}" if camera == "team" else
                         f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera")
         size_label = "true-scale aircraft" if true_scale else "enlarged aircraft glyphs"
         if title is not None:

@@ -132,3 +132,13 @@ def test_close_up_options_parse_and_validate():
     for bad in ("0","-5","91"):
         with pytest.raises(SystemExit):
             main(["replay","runs/x","--elevation",bad])
+
+
+def test_team_camera_and_size_options():
+    import pytest
+    from uav3d.cli import main, parser
+    args = parser().parse_args(["replay","runs/x","--camera","team","--uav-scale","3","--target-scale","0.6"])
+    assert (args.camera,args.uav_scale,args.target_scale) == ("team",3.,.6)
+    for flag in ("--uav-scale","--target-scale"):
+        with pytest.raises(SystemExit):
+            main(["replay","runs/x",flag,"0"])

@@ -69,11 +69,12 @@ def parser():
     q.add_argument("--time",type=float,default=None,help="mission time for PNG; default: final recorded time")
     q.add_argument("--fps",type=int,default=24)
     q.add_argument("--speed",type=float,default=1.,help="mission seconds per video second")
-    q.add_argument("--camera",choices=("follow","overview"),default="follow",
-                   help="follow the target (default) or show the full map")
+    q.add_argument("--camera",choices=("follow","team","overview"),default="follow",
+                   help="follow the target (default), follow the team (midway between the "
+                        "aircraft and the target), or show the full map")
     q.add_argument("--zoom",type=float,default=None,
                    help="follow camera magnification relative to the full map (default: 3; "
-                        "40 with --true-scale; see --follow-uav)")
+                        "20 with --true-scale, a ~50 m window on a 1000 m map; see --follow-uav)")
     q.add_argument("--start",type=float,default=None,help="video: first mission second (default: 0)")
     q.add_argument("--end",type=float,default=None,help="video: last mission second (default: run end)")
     q.add_argument("--follow-uav",type=int,default=None,metavar="I",
@@ -82,11 +83,15 @@ def parser():
     q.add_argument("--elevation",type=float,default=None,metavar="DEG",
                    help="camera elevation above the horizon (default 55; 80 with --follow-uav, "
                         "35 for --camera overview); 90 = straight down")
+    q.add_argument("--uav-scale",type=float,default=None,metavar="K",
+                   help="draw the aircraft K times larger (illustration only)")
+    q.add_argument("--target-scale",type=float,default=None,metavar="K",
+                   help="draw the target vehicle K times larger (e.g. 0.6 for smaller)")
     q.add_argument("--annotate",action="store_true",
                    help="draw the title band (scenario, method, time, camera) and the legend")
     q.add_argument("--true-scale",action="store_true",
                    help="physical proportions: aircraft at ROBOT_RADIUS, the target as a ~4.6 m car, "
-                        "no vertical exaggeration, default --zoom 40")
+                        "no vertical exaggeration, default --zoom 20")
     q.add_argument("--draft",action="store_true",
                    help="video: fast low-resolution preview (no 3x supersampling)")
     return p
@@ -176,6 +181,10 @@ def main(argv=None):
             p.error("--zoom must be finite and positive")
         if args.elevation is not None and not 0 < args.elevation <= 90:
             p.error("--elevation must be in (0, 90]")
+        for name in ("uav_scale","target_scale"):
+            value = getattr(args,name)
+            if value is not None and (not math.isfinite(value) or value<=0):
+                p.error(f"--{name.replace('_','-')} must be finite and positive")
         from .replay import render
         render(args)
         return 0
