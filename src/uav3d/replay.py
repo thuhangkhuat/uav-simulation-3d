@@ -32,6 +32,31 @@ class TargetFollowAxes(Axes3D):
         return projection
 
 
+def fit_zoom(ax, centres, points, bounds, max_z, exaggerate=True, margin=.9):
+    """Largest follow-camera zoom keeping every point inside the frame.
+
+    centres: camera centre per sampled frame; points: (N, 3) positions per frame
+    that must stay visible. The camera scales screen offsets from its centre
+    linearly with the zoom, so they are measured in pixels once at zoom 1; the
+    result leaves (1 - margin) of the half-frame as a border.
+    """
+    from mpl_toolkits.mplot3d import proj3d
+    ax.figure.canvas.draw()                  # settle the 2D data -> pixel transform
+    half_w, half_h = ax.bbox.width/2, ax.bbox.height/2
+    zoom = np.inf
+    for centre, pts in zip(centres, points):
+        follow_camera(ax, centre, bounds, max_z, 1., exaggerate)
+        projection = ax.get_proj()
+        def pixels(p):
+            p = np.asarray(p, float).reshape(-1, 3)
+            x, y, _ = proj3d.proj_transform(p[:, 0], p[:, 1], p[:, 2], projection)
+            return ax.transData.transform(np.c_[x, y])
+        offset = np.abs(pixels(pts)-pixels(centre))
+        with np.errstate(divide="ignore"):
+            zoom = min(zoom, margin*half_w/offset[:, 0].max(), margin*half_h/offset[:, 1].max())
+    return float(zoom)
+
+
 def follow_camera(ax, target, bounds, max_z, zoom, exaggerate=True):
     """Move the camera to the target, keeping world bounds and heading fixed.
 
@@ -232,6 +257,19 @@ def render(args):
         ax.legend(handles=[trail.front for trail in trails]+[Patch(color=TARGET_COLOR,label="Target")],
                   loc="upper left", bbox_to_anchor=(.008, .915), fontsize=8)
     square = np.array([[-half,-half,0],[half,-half,0],[half,half,0],[-half,half,0],[-half,-half,0]])
+    if getattr(args, "fit_team", False) and following and follow_uav is None:
+        # One zoom for the whole clip: target centred, every aircraft in frame.
+        if output.suffix.lower()==".png":
+            moments = [times[-1] if args.time is None else args.time]
+        else:
+            moments = np.r_[np.arange(start,end,.25),end]
+        rows = [max(0,min(len(times)-1,np.searchsorted(times,t,side="right")-1)) for t in moments]
+        centres = [targets[k] if camera != "team" else (states[k,:,:3].mean(axis=0)+targets[k])/2
+                   for k in rows]
+        zoom = fit_zoom(ax, centres, [states[k,:,:3] for k in rows], (xmin,ymin,xmax,ymax),
+                        max_z, exaggerate=not true_scale)
+        print(f"--fit-team: zoom {zoom:.1f}")
+
     def update(t):
         index = max(0,min(len(times)-1,np.searchsorted(times,t,side="right")-1))
         s = states[index]
@@ -271,8 +309,10 @@ def render(args):
         target_line.update(np.r_[targets[:index:stride], targets[None,index]],
                            projection, boxes)
         vehicle.update(np.r_[targets[index,:2],0.], target_heading[index])
-        vehicle.set_layer(*((HIDDEN_LAYER, .01) if occluded(projection, np.r_[targets[index,:2],1.],
-                                                          boxes)[0] else (0., 1.)))
+        # A target-centred camera keeps its subject drawn, like a close-up's UAV.
+        subject = following and camera == "follow" and follow_uav is None
+        vehicle.set_layer(*((HIDDEN_LAYER, .01) if not subject and occluded(
+            projection, np.r_[targets[index,:2],1.], boxes)[0] else (0., 1.)))
         camera_label = (f"UAV {follow_uav} close-up · zoom ×{zoom:g}" if follow_uav is not None else
                         f"Team camera · zoom ×{zoom:g}" if camera == "team" else
                         f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera")

@@ -49,7 +49,7 @@ uv run uav3d replay runs/ours-demo --out exports/ours.mp4 --speed 5 --fps 24
 uv run uav3d replay runs/ours-demo --out exports/closeup.mp4 --zoom 4
 uv run uav3d replay runs/ours-demo --out exports/overview.mp4 --camera overview
 # Physical scenery: the team in a ~50 m view (aircraft drawn 3x), and a close-up on UAV 3.
-uv run uav3d replay runs/ours-demo --out exports/team.mp4 --true-scale --camera team --uav-scale 3 --target-scale 0.6 --start 225 --end 245
+uv run uav3d replay runs/ours-demo --out exports/team.mp4 --true-scale --fit-team --uav-scale 6 --start 225 --end 245
 uv run uav3d replay runs/ours-demo --out exports/uav3.mp4 --true-scale --follow-uav 3 --start 2 --end 6
 # Quick preview of a few seconds: a time range, low resolution, GIF needs no FFmpeg.
 uv run uav3d replay runs/ours-demo --out exports/preview.gif --start 232 --end 236 --speed 1 --fps 10 --draft
@@ -363,7 +363,10 @@ px at zoom 20). `--camera team` centres the view midway between the aircraft (at
 altitude) and the target, so the formation stays in frame; `--uav-scale K` and
 `--target-scale K` resize only the aircraft and vehicle drawings (positions,
 scenery and FOV squares stay true), e.g. `--true-scale --camera team --uav-scale
-3 --target-scale 0.6`. `--follow-uav I` gives a close-up: the camera follows UAV I
+3 --target-scale 0.6`. `--fit-team` keeps the target centred and picks one zoom for the whole clip (or
+PNG time) so that every aircraft stays in frame, measured in screen pixels with
+a 10 % border; the target-centred camera always draws the target vehicle, even
+behind scenery. `--follow-uav I` gives a close-up: the camera follows UAV I
 (default `--zoom 100` with `--true-scale`, ~90 px) and looks down steeply
 (`--elevation`, default 80 degrees there, 55 for the target view). The followed
 UAV and its trail are always drawn on top, even beside a facade taller than its

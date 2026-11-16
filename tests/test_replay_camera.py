@@ -142,3 +142,26 @@ def test_team_camera_and_size_options():
     for flag in ("--uav-scale","--target-scale"):
         with pytest.raises(SystemExit):
             main(["replay","runs/x",flag,"0"])
+
+
+def test_fit_zoom_keeps_points_in_frame():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import proj3d
+    from uav3d.replay import TargetFollowAxes, fit_zoom, follow_camera
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_axes((0, 0, 1, 1), axes_class=TargetFollowAxes)
+    ax.view_init(elev=55, azim=-65); ax.set_proj_type("ortho")
+    bounds, centre = (0, 0, 1000, 1000), np.array([500., 500., 0.])
+    points = centre + np.array([[60., 0, 30], [-40, 70, 30], [0, -80, 30]])
+    zoom = fit_zoom(ax, [centre], [points], bounds, 51., exaggerate=False)
+    follow_camera(ax, centre, bounds, 51., zoom, exaggerate=False)
+    fig.canvas.draw()
+    M = ax.get_proj()
+    pix = lambda p: ax.transData.transform(np.c_[proj3d.proj_transform(p[:, 0], p[:, 1], p[:, 2], M)[:2]])
+    offset = np.abs(pix(points)-pix(centre[None]))
+    # Every point inside the frame, the widest one at the 90 % margin.
+    assert offset[:, 0].max() <= .9*ax.bbox.width/2+1 and offset[:, 1].max() <= .9*ax.bbox.height/2+1
+    assert max(offset[:, 0].max()/(ax.bbox.width/2), offset[:, 1].max()/(ax.bbox.height/2)) > .89
+    plt.close(fig)
