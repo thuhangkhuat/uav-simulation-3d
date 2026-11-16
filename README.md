@@ -48,6 +48,9 @@ uv run uav3d replay runs/ours-demo --out exports/ours.mp4 --speed 5 --fps 24
 # Follow the target at 4× magnification, or restore the full-map view.
 uv run uav3d replay runs/ours-demo --out exports/closeup.mp4 --zoom 4
 uv run uav3d replay runs/ours-demo --out exports/overview.mp4 --camera overview
+# Physical proportions: team view (zoom 40) and a close-up on UAV 3.
+uv run uav3d replay runs/ours-demo --out exports/team.mp4 --true-scale --start 225 --end 245
+uv run uav3d replay runs/ours-demo --out exports/uav3.mp4 --true-scale --follow-uav 3 --start 2 --end 6
 # Quick preview of a few seconds: a time range, low resolution, GIF needs no FFmpeg.
 uv run uav3d replay runs/ours-demo --out exports/preview.gif --start 232 --end 236 --speed 1 --fps 10 --draft
 
@@ -349,8 +352,20 @@ Errors and interrupted runs are labeled, not presented as successful missions.
 Replay reads these artifacts without importing planners. X-frame quadcopter
 glyphs (hub in the UAV colour, white front motors, translucent rotor discs with
 propellers that spin with mission time, white nose stripe) follow recorded
-attitude and are enlarged for field-scale visibility. The target is a red ground
-vehicle yawed to its direction of travel (from its motion over ±0.5 s; it keeps
+attitude and are enlarged for field-scale visibility (about 22 m across on a
+1000 m map, against `ROBOT_RADIUS` = 0.5 m; `--true-scale` draws them at
+`ROBOT_RADIUS` and the target as a 4.6 m car, without vertical exaggeration and
+with a default `--zoom 40` for a team view; there each
+circular obstacle becomes a grove of life-size trees, 3.5-6 m crowns filling its
+disk and nearly as tall as the obstacle column, and pavers are 4 m). At true
+scale a 1 m aircraft is only ~0.9 px per zoom unit wide in a 1920 px video (~35
+px at zoom 40), so `--follow-uav I` gives a close-up: the camera follows UAV I
+(default `--zoom 100` with `--true-scale`, ~90 px) and looks down steeply
+(`--elevation`, default 80 degrees there, 55 for the target view). The followed
+UAV and its trail are always drawn on top, even beside a facade taller than its
+flight altitude; other aircraft are occluded as usual. The
+target is a teal ground vehicle (outside the UAV palette, about 9 m long when
+enlarged) yawed to its direction of travel (from its motion over ±0.5 s; it keeps
 its heading while stopped), drawn below the aircraft and hidden by scenery like
 them; the vertical display aspect is also
 exaggerated when needed, with its scale factor labeled. Aircraft
@@ -360,10 +375,12 @@ The default camera follows the recorded target at 3× magnification with a
 map edges; distant drones may leave the frame. Tracking pans the camera projection;
 world axis limits, ground paving, and obstacle coordinates stay fixed. `--zoom` adjusts magnification,
 and `--camera overview` restores the full-map view. Camera tracking does not
-change the trajectory or simulation.
+change the trajectory or simulation. The follow camera draws only the scenery
+near its view each frame (padded by the view span, the largest footprint and
+the obstacle height, keeping whole obstacles), which keeps frames fast.
 The scenery viewport fills the entire output frame without stretching the map;
-the title sits on an opaque white overlay at the top and the UAV legend sits
-below it. World axes and their labels are hidden for a clean video frame.
+frames carry no text by default; `--annotate` adds a title band (scenario,
+method, time, camera) and the legend. World axes and their labels are hidden for a clean video frame.
 MP4 export uses an environment-managed FFmpeg binary (PNG export does not need it). Replay uses dark gray
 running-bond brick paving and buildings on rectangular obstacle footprints
 with framed glass, entrances, parapets, and rooftop solar panels,

@@ -105,3 +105,19 @@ def test_window_edges_remain_stable_during_subpixel_camera_pan():
         return np.abs(np.diff(frames, n=2, axis=0)).sum()
 
     assert flicker(smooth=True) < .65*flicker(smooth=False)
+
+
+def test_true_scale_grove_stays_inside_its_obstacle():
+    import numpy as np
+    from uav3d.scene import _grove
+    for radius in (10., 17., 25.):
+        meshes = []
+        _grove(meshes, 100., 200., radius, 39., 3)
+        points = np.concatenate([np.asarray(face) for face, *_ in meshes])
+        # Every crown and trunk stays within the obstacle disk and below its height,
+        # so the occlusion volume (occluder_bounds) still encloses the drawing.
+        assert np.hypot(points[:, 0]-100., points[:, 1]-200.).max() <= radius+1e-6
+        assert points[:, 2].max() <= 39.
+        assert points[:, 2].max() > .8*39.          # as tall as the obstacle column
+        trunks = sum(1 for face, *_ in meshes if len(face) == 4)//8
+        assert trunks >= 4 if radius > 15 else trunks >= 1   # a grove, not one tree

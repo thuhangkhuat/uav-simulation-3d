@@ -32,7 +32,7 @@ class TargetFollowAxes(Axes3D):
         return projection
 
 
-def follow_camera(ax, target, bounds, max_z, zoom):
+def follow_camera(ax, target, bounds, max_z, zoom, exaggerate=True):
     """Move the camera to the target, keeping world bounds and heading fixed.
 
     Returns the vertical display scale and the nominal horizontal view window.
@@ -41,7 +41,8 @@ def follow_camera(ax, target, bounds, max_z, zoom):
     xmin, ymin, xmax, ymax = bounds
     full_span = max(xmax-xmin, ymax-ymin)
     span = full_span/zoom
-    display_z = max(max_z, .11*full_span)
+    # Exaggerate heights on a field-scale map; true proportions otherwise.
+    display_z = max(max_z, .11*full_span) if exaggerate else max_z
     scale = display_z/max_z
     ax.set(xlim=(xmin, xmax), ylim=(ymin, ymax), zlim=(0, max_z))
     ax.set_box_aspect((xmax-xmin, ymax-ymin, display_z))
@@ -58,6 +59,7 @@ def follow_camera(ax, target, bounds, max_z, zoom):
 # beneath the scenery, so the obstacle covers them where its mesh is solid
 # and they still show through gaps (e.g. between tree crown lobes).
 HIDDEN_LAYER = .5
+TARGET_COLOR = "#14b8a6"     # teal: not among the UAV colours (matplotlib Set1)
 
 
 def view_directions(projection, points):
@@ -158,31 +160,58 @@ def render(args):
     max_z = max(10.,float(states[:,:,2].max())*1.7)
     ax.set(xlim=(xmin,xmax),ylim=(ymin,ymax),zlim=(0,max_z),
            xlabel="East [m]",ylabel="North [m]",zlabel="Altitude [m]")
-    display_z = max(max_z,.22*max(xmax-xmin,ymax-ymin))
+    true_scale = getattr(args, "true_scale", False)
+    display_z = max_z if true_scale else max(max_z,.22*max(xmax-xmin,ymax-ymin))
     z_scale = display_z/max_z
     ax.set_box_aspect((xmax-xmin,ymax-ymin,display_z))
     ax.set_zticks(np.linspace(0,max_z,3))
     ax.view_init(elev=35,azim=-65)
     following = getattr(args, "camera", "follow") == "follow"
-    zoom = getattr(args, "zoom", 3.)
+    follow_uav = getattr(args, "follow_uav", None)
+    if follow_uav is not None and not 0 <= follow_uav < states.shape[1]:
+        raise ValueError(f"--follow-uav must be in 0..{states.shape[1]-1}")
+    following = following or follow_uav is not None
+    # Defaults: a team view (target-follow) or a close-up on one aircraft.
+    zoom = getattr(args, "zoom", None) or (
+        (100. if true_scale else 8.) if follow_uav is not None else (40. if true_scale else 3.))
+    # Close-ups look down steeply: at 55 deg a facade taller than the flight
+    # altitude hides an aircraft flying right beside it.
+    elevation = getattr(args, "elevation", None)
     if following:
-        ax.view_init(elev=55, azim=-65)
+        ax.view_init(elev=elevation or (80. if follow_uav is not None else 55.), azim=-65)
         ax.set_proj_type("ortho")
+    elif elevation:
+        ax.view_init(elev=elevation, azim=-65)
     ax.set_axis_off()
-    # Figure overlays do not reserve space or shrink the scenery viewport.
-    fig.add_artist(Rectangle((0, .925), 1, .075, transform=fig.transFigure,
-                             facecolor="white", edgecolor="none", zorder=10))
-    title = fig.text(.5, .988, "", ha="center", va="top", fontsize=11,
-                     color="#111111", zorder=11)
+    annotate = getattr(args, "annotate", False)
+    title = None
+    if annotate:
+        # Figure overlays do not reserve space or shrink the scenery viewport.
+        fig.add_artist(Rectangle((0, .925), 1, .075, transform=fig.transFigure,
+                                 facecolor="white", edgecolor="none", zorder=10))
+        title = fig.text(.5, .988, "", ha="center", va="top", fontsize=11,
+                         color="#111111", zorder=11)
     height = max(5.,float(states[:,:,2].max())*1.3)
-    draw_city(ax, (xmin,ymin,xmax,ymax), cfg["scenario_definition"]["rects"],
-              cfg["scenario_definition"]["circles"], height)
+    clip_view = draw_city(ax, (xmin,ymin,xmax,ymax), cfg["scenario_definition"]["rects"],
+                          cfg["scenario_definition"]["circles"], height,
+                          true_scale=getattr(args, "true_scale", False))
+    # Largest obstacle footprint: a padded view window must contain any obstacle
+    # that can reach into the frame, so obstacles never pop in or out.
+    obstacle_extent = max([max(w, d) for _, _, w, d in cfg["scenario_definition"]["rects"]] +
+                          [2*r for _, _, r in cfg["scenario_definition"]["circles"]] + [0.])
     boxes = occluder_bounds(cfg["scenario_definition"]["rects"],
                             cfg["scenario_definition"]["circles"], height)
     n = states.shape[1]
     colors = plt.cm.Set1(np.arange(n)%9)
-    # Enlarge only the aircraft illustration for field-scale readability.
-    glyph = max(1.,(xmax-xmin)*.008)
+    if true_scale:
+        # Physical size: the glyph's outer radius equals the configured ROBOT_RADIUS
+        # (the collision/safety sphere); the target is a ~4.6 m car.
+        glyph = float(cfg["params"]["ROBOT_RADIUS"])/QuadcopterGlyph.OUTER_RADIUS
+        vehicle_scale = 1.
+    else:
+        # Enlarge only the illustrations for field-scale readability.
+        glyph = max(1.,(xmax-xmin)*.008)
+        vehicle_scale = .25*glyph
     half = cfg["params"]["VIEWING_RADIUS"]
     trails,aircraft,footprints = [],[],[]
     for i in range(n):
@@ -191,27 +220,40 @@ def render(args):
         # Long square edges are split so an obstacle can hide part of one.
         footprints.append(DepthSplitLine(ax,segment=half/8,color=colors[i],lw=.8,alpha=.6))
     target_line = DepthSplitLine(ax,color="#f1f5f9",ls="--",lw=1)
-    # The target is drawn as a ground vehicle facing its direction of travel.
-    vehicle = VehicleGlyph(ax, "#dc2626", .5*glyph)
+    # The target is drawn as a ground vehicle facing its direction of travel, in
+    # a colour outside the UAV palette (matplotlib Set1).
+    vehicle = VehicleGlyph(ax, TARGET_COLOR, vehicle_scale)
     target_heading = headings(targets, times)
-    ax.legend(handles=[trail.front for trail in trails]+[Patch(color="#dc2626",label="Target")],
-              loc="upper left", bbox_to_anchor=(.008, .915), fontsize=8)
+    if annotate:
+        ax.legend(handles=[trail.front for trail in trails]+[Patch(color=TARGET_COLOR,label="Target")],
+                  loc="upper left", bbox_to_anchor=(.008, .915), fontsize=8)
     square = np.array([[-half,-half,0],[half,-half,0],[half,half,0],[-half,half,0],[-half,-half,0]])
     def update(t):
         index = max(0,min(len(times)-1,np.searchsorted(times,t,side="right")-1))
         s = states[index]
         # Set the camera first: occlusion is tested against this frame's view.
         if following:
-            scale, _ = follow_camera(ax, targets[index], (xmin,ymin,xmax,ymax), max_z, zoom)
+            centre = targets[index] if follow_uav is None else s[follow_uav,:3]
+            scale, window = follow_camera(ax, centre, (xmin,ymin,xmax,ymax), max_z, zoom,
+                                          exaggerate=not true_scale)
+            # Draw only scenery near the view: the full city every frame is slow.
+            # Pad by the view span (wide frames, oblique camera, tall facades) and
+            # the largest footprint, since clip_view keeps whole obstacles only.
+            pad = (window[2]-window[0]) + obstacle_extent + height
+            clip_view((window[0]-pad, window[1]-pad, window[2]+pad, window[3]+pad))
         else:
             scale = z_scale
         projection = ax.get_proj()
         stride = max(1,index//1000)
         hidden = occluded(projection, s[:,:3], boxes)
+        if follow_uav is not None:
+            # The close-up's subject is always drawn: next to a facade taller than
+            # its flight altitude it would otherwise vanish behind the roof edge.
+            hidden[follow_uav] = False
         for i in range(n):
             # Keep the newest sample so the trail reaches the aircraft.
             trails[i].update(np.r_[states[:index:stride,i,:3], s[None,i,:3]],
-                             projection, boxes)
+                             projection, boxes if i != follow_uav else np.empty((0,2,3)))
             aircraft[i].update(s[i,:3], s[i,6:10], times[index])
             aircraft[i].set_layer(*((HIDDEN_LAYER, .01) if hidden[i] else (0., 1.)))
             footprints[i].update(square+np.r_[s[i,:2],.05], projection, boxes)
@@ -220,9 +262,12 @@ def render(args):
         vehicle.update(np.r_[targets[index,:2],0.], target_heading[index])
         vehicle.set_layer(*((HIDDEN_LAYER, .01) if occluded(projection, np.r_[targets[index,:2],1.],
                                                           boxes)[0] else (0., 1.)))
-        camera_label = f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera"
-        title.set_text(f"{cfg['scenario']} · {cfg['controller']} · {n} UAVs · t = {times[index]:.3f} s\n"
-                       f"{camera_label} · enlarged aircraft glyphs · vertical display scale ×{scale:.1f}")
+        camera_label = (f"UAV {follow_uav} close-up · zoom ×{zoom:g}" if follow_uav is not None else
+                        f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera")
+        size_label = "true-scale aircraft" if true_scale else "enlarged aircraft glyphs"
+        if title is not None:
+            title.set_text(f"{cfg['scenario']} · {cfg['controller']} · {n} UAVs · t = {times[index]:.3f} s\n"
+                           f"{camera_label} · {size_label} · vertical display scale ×{scale:.1f}")
         return []
     if output.suffix.lower()==".png":
         update(times[-1] if args.time is None else args.time)

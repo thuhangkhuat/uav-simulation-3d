@@ -77,6 +77,7 @@ class QuadcopterGlyph(_Glyph):
     """
 
     ARM = .72                     # motor distance from the centre along each axis
+    OUTER_RADIUS = ARM*np.sqrt(2)+.34   # centre to rotor-disc edge, in glyph units
 
     def __init__(self, ax, color, scale):
         super().__init__()

@@ -115,10 +115,9 @@ def _branch(meshes, start, end, radius):
     _mesh(meshes, faces, ["#70503a", "#826044", "#5d4331", "#987454"])
 
 
-def _crown(meshes, center, radii, rng, base):
+def _crown(meshes, center, radii, rng, base, sectors=10, bands=6):
     # Irregular triangulated ellipsoids with a consistent sunlight direction.
     # Adjacent triangles share vertices: no cracks or regular striped bands.
-    sectors, bands = 10, 6
     vertices = []
     for band in range(bands+1):
         latitude = np.pi*band/bands
@@ -170,24 +169,60 @@ def _tree(meshes, x, y, radius, height, index):
            (radius*.62, radius*.62, top*.24), rng, base)
 
 
-def draw_city(ax, bounds, rects, circles, height):
-    """Draw display-scale brick paving, buildings, and trees from saved footprints."""
+def _grove(meshes, x, y, radius, height, index):
+    """A circular obstacle as a grove of life-size trees (true-scale replay).
+
+    Crowns (3.5-6 m) stay inside the obstacle disk and the trees reach close to
+    the obstacle column height, so the drawing still matches what the planners
+    avoid: a vertical column, not just the space under a low canopy.
+    """
+    rng = np.random.default_rng(7300+index)
+    crown = float(np.clip(radius*.25, 3.5, 6.))
+    reach = max(0., radius-crown)
+    step = 1.7*crown
+    count = int(np.ceil(reach/step))
+    spots = []
+    for i in range(-count, count+1):
+        for j in range(-count, count+1):
+            px = x+step*(i+.5*(j % 2))+rng.uniform(-.25, .25)*crown
+            py = y+step*j*.87+rng.uniform(-.25, .25)*crown
+            if np.hypot(px-x, py-y) <= reach:
+                spots.append((px, py))
+    if not spots:
+        spots = [(x, y)]
+    palette = [(.24, .47, .27), (.29, .51, .29), (.34, .53, .27), (.27, .44, .25)]
+    for k, (px, py) in enumerate(spots):
+        top = height*rng.uniform(.86, .98)
+        r = crown*rng.uniform(.85, 1.)
+        _branch(meshes, (px, py, 0), (px, py, top*.62), max(.25, r*.09))
+        _crown(meshes, (px, py, top*.70), (r, r, top*.29), rng,
+               palette[(index+k) % len(palette)], sectors=8, bands=4)
+
+
+def draw_city(ax, bounds, rects, circles, height, true_scale=False):
+    """Draw brick paving, buildings, and trees from saved footprints.
+
+    Display scale (default): coarse pavers and one large tree per circular
+    obstacle stay legible on a kilometre-scale map. true_scale: 4 m pavers and
+    each circular obstacle as a grove of life-size trees.
+    """
     xmin, ymin, xmax, ymax = bounds
     # Coarse pavers keep the bond visible on kilometre-scale overview maps and
     # bound mesh complexity. Geometry and colors are deterministic across frames.
-    brick = max(xmax-xmin, ymax-ymin)/48
+    brick = 4. if true_scale else max(xmax-xmin, ymax-ymin)/48
     # Extend the decorative floor on every side of the simulation domain.
     # A fixed world-span apron keeps paving under the panning camera near map
     # edges, including negative X/Y, without moving the world axes or obstacles.
-    apron = 48*brick
+    apron = 48*brick if not true_scale else 200.
     ground_bounds = (xmin-apron, ymin-apron, xmax+apron, ymax+apron)
     gxmin, gymin, gxmax, gymax = ground_bounds
     faces, colors = [], []
     palette = ["#414448", "#484b4f", "#3c3f43", "#4d5054", "#45484c"]
-    for row in range(-48, int(np.ceil((ymax-ymin)/brick))+48):
+    rows, columns = int(np.ceil(apron/brick)), int(np.ceil(apron/(2*brick)))
+    for row in range(-rows, int(np.ceil((ymax-ymin)/brick))+rows):
         y = ymin+row*brick
         offset = brick if row % 2 else 0
-        for column in range(-24, int(np.ceil((xmax-xmin+offset)/(2*brick)))+24):
+        for column in range(-columns, int(np.ceil((xmax-xmin+offset)/(2*brick)))+columns):
             x = xmin-offset+column*2*brick
             left, right = max(gxmin, x), min(gxmax, x+2*brick)
             top = min(gymax, y+brick)
@@ -197,7 +232,7 @@ def draw_city(ax, bounds, rects, circles, height):
     # The camera always looks down on z=0. Draw paving first: averaging depths
     # of wide brick faces with tall obstacle faces can otherwise paint bricks
     # over trunks and lower walls, especially in the zoomed follow view.
-    ground = Poly3DCollection([], edgecolors="#292c30", linewidths=.45, zorder=0)
+    ground = Poly3DCollection([], edgecolors="#292c30", linewidths=.3 if true_scale else .45, zorder=0)
     ax.add_collection3d(ground, autolim=False)
     obstacles = []
     for index, (x, y, width, depth) in enumerate(rects):
@@ -206,7 +241,7 @@ def draw_city(ax, bounds, rects, circles, height):
         obstacles.append(((x, y, x+width, y+depth), meshes))
     for index, (x, y, radius) in enumerate(circles):
         meshes = []
-        _tree(meshes, x, y, radius, height, index)
+        (_grove if true_scale else _tree)(meshes, x, y, radius, height, index)
         obstacles.append(((x-radius, y-radius, x+radius, y+radius), meshes))
     # Smooth moving window edges; matching edge strokes seal adjacent tiles.
     scenery = Poly3DCollection([], zorder=1, antialiaseds=True, snap=False)

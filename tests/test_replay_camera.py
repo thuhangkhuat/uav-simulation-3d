@@ -62,7 +62,8 @@ def test_follow_keeps_target_projected_at_center_without_zoom_pumping():
 def test_replay_defaults_to_target_follow():
     args = parser().parse_args(["replay", "recording"])
     assert args.camera == "follow"
-    assert args.zoom == 3
+    # None = resolved in render: 3, or 20 (~50 m window) with --true-scale.
+    assert args.zoom is None
 
 
 @pytest.mark.parametrize("zoom", ["0", "-1", "nan", "inf"])
@@ -105,3 +106,29 @@ def test_replay_preview_options_parse():
     assert (args.start,args.end,args.draft) == (232.,236.,True)
     args = parser().parse_args(["replay","runs/x"])
     assert args.start is None and args.end is None and not args.draft
+
+
+def test_true_scale_camera_has_no_vertical_exaggeration():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from uav3d.replay import TargetFollowAxes, follow_camera
+    from uav3d.cli import parser
+    fig = plt.figure()
+    ax = fig.add_axes((0, 0, 1, 1), axes_class=TargetFollowAxes)
+    scale, _ = follow_camera(ax, [500, 500, 0], (0, 0, 1000, 1000), 51., 20., exaggerate=False)
+    assert scale == 1.
+    scale, _ = follow_camera(ax, [500, 500, 0], (0, 0, 1000, 1000), 51., 3.)
+    assert scale > 2
+    plt.close(fig)
+    assert parser().parse_args(["replay","runs/x","--true-scale"]).zoom is None   # 20 applied in render
+
+
+def test_close_up_options_parse_and_validate():
+    import pytest
+    from uav3d.cli import main, parser
+    args = parser().parse_args(["replay","runs/x","--follow-uav","3","--elevation","80"])
+    assert (args.follow_uav,args.elevation) == (3,80.)
+    for bad in ("0","-5","91"):
+        with pytest.raises(SystemExit):
+            main(["replay","runs/x","--elevation",bad])
