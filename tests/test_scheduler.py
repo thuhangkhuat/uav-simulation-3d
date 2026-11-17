@@ -219,3 +219,21 @@ def test_cli_forwards_start_jitter():
     assert command[command.index("--start-jitter")+1] == "20.0"
     assert command[command.index("--jitter-key")+1] == "scen1"
     assert "--start-jitter" not in worker_command(parser().parse_args(["run"]),"ours","runs/x")
+
+
+def test_own_delivery_events_use_each_uavs_own_duration():
+    from uav3d.scheduler import own_events, parallel_events
+    durations = [.03, .46, .05]
+    own = list(own_events(durations, release=2.7, round_index=12))
+    shared = list(parallel_events(durations, release=2.7, round_index=12))
+    assert [round(e.completed_at, 9) for e in own] == [2.73, 3.16, 2.75]          # release + C_i
+    assert all(round(e.completed_at, 9) == 3.16 for e in shared)                   # release + max C_i
+    assert np.allclose([e.latency_s for e in own], [e.execution_s for e in own])
+    assert all(e.queue_wait_s == 0 and e.round == 12 for e in own)
+
+
+def test_cli_accepts_parallel_own():
+    from uav3d.cli import parser, worker_command
+    args = parser().parse_args(["run","--scheduling","parallel_own"])
+    command = worker_command(args,"ours","runs/x")
+    assert command[command.index("--scheduling")+1] == "parallel_own"

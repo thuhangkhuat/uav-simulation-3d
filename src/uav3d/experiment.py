@@ -11,7 +11,7 @@ import subprocess
 import time
 import numpy as np
 from .physics import IdealBackend, RotorPyBackend, guard_settings, speed_guard_settings
-from .scheduler import PlanningEvent, next_release, parallel_events, plan_against_snapshot, scaled_delay
+from .scheduler import PlanningEvent, next_release, own_events, parallel_events, plan_against_snapshot, scaled_delay
 from . import upstream
 
 
@@ -231,8 +231,9 @@ def run(args):
                                             accept_position_radius_ratio=upstream.ACCEPT_POSITION_RADIUS_RATIO,
                                             accept_speed_error=upstream.ACCEPT_SPEED_ERROR)
                          if follow_plan else None,
-                         deployment="one_worker_per_uav" if args.scheduling=="parallel"
-                         else "shared_ground_cpu_sequential",order="ascending_drone_id",
+                         deployment={"parallel":"one_worker_per_uav",
+                                     "parallel_own":"one_worker_per_uav_own_delivery"}.get(
+                                         args.scheduling,"shared_ground_cpu_sequential"),order="ascending_drone_id",
                          physics=("upstream_dynamics_ideal" if physics == "ideal"
                                   else "rotorpy_hummingbird_cmd_acc"),aerodynamics=False,
                          upstream_sha=_git_sha(upstream.UPSTREAM),
@@ -304,7 +305,7 @@ def run(args):
                     raise ValueError("Invalid recorded computation duration")
                 return measured,delay
 
-            def deliver(event, robot):
+            def deliver(event, robot, log=True):
                 record = asdict(event)|dict(queue_wait_s=event.queue_wait_s,latency_s=event.latency_s,
                                            requested_command=robot.requested_command.tolist(),delivered=False,
                                            upstream_stop=bool(robot.stop_current))
@@ -335,12 +336,33 @@ def run(args):
                     plans.append(robot.states_prediction.copy())
                     plan_epochs.append([release,event.completed_at])
                     plan_drones.append(event.drone)
+                if log:
+                    write_event(record)
+                return record
+
+            def write_event(record):
                 events.append(record)
                 # Persist events as they complete, so partial runs are inspectable.
                 with (out/"events.jsonl").open("a") as f:
                     f.write(json.dumps(record)+"\n")
 
-            if args.scheduling == "parallel":
+            if args.scheduling == "parallel_own":
+                # One worker per UAV, each command delivered when that UAV's own
+                # solve ends (release + C_i): a slow or failed solve elsewhere no
+                # longer delays it. Every planner still sees the pre-round team
+                # predictions, and the next release waits for the last delivery.
+                timed = plan_against_snapshot(robots,lambda i,robot: plan(i,robot,i))
+                round_events = list(own_events([d for _,d in timed],release,round_index))
+                records = {}
+                for event in sorted(round_events,key=lambda e: (e.completed_at,e.drone)):
+                    sim.advance(event.completed_at)
+                    records[event.drone] = deliver(replace(event,execution_s=timed[event.drone][0]),
+                                                   robots[event.drone],log=False)
+                    sim.sample()
+                # Logged in drone order, as the other modes (timing replay relies on it).
+                for drone in sorted(records):
+                    write_event(records[drone])
+            elif args.scheduling == "parallel":
                 # One worker per UAV: every planner sees the pre-round team predictions,
                 # and all commands arrive together after the slowest solve, d = max(C_i).
                 timed = plan_against_snapshot(robots,lambda i,robot: plan(i,robot,i))

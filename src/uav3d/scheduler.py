@@ -29,7 +29,7 @@ def next_release(completed, released, period):
     return tick*period, tick-round(released/period)-1
 
 
-SCHEDULES = ("parallel", "sequential")
+SCHEDULES = ("parallel", "parallel_own", "sequential")
 # How a delivered result drives the aircraft. "tracked_plan_with_watchdog" is the
 # adapter safety layer for "ours"; "hold_latest" holds upstream's issued command.
 COMMAND_EXECUTIONS = ("tracked_plan_with_watchdog", "hold_latest")
@@ -56,6 +56,17 @@ def parallel_events(durations, release=0., round_index=0):
     end = release+max(durations, default=0.)
     for i, duration in enumerate(durations):
         yield PlanningEvent(round_index,i,release,release,end,duration,duration)
+
+
+def own_events(durations, release=0., round_index=0):
+    """One worker per UAV, each delivering its own result: all start at release,
+    UAV i's command arrives at release+C_i (not after the slowest one). The round
+    stays synchronous: the next release still waits for the last delivery."""
+    durations = list(durations)
+    for i, duration in enumerate(durations):
+        if not math.isfinite(duration) or duration < 0:
+            raise ValueError("Planning duration must be finite and nonnegative")
+        yield PlanningEvent(round_index,i,release,release,release+duration,duration,duration)
 
 
 def plan_against_snapshot(robots, plan):

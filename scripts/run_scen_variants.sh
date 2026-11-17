@@ -18,6 +18,7 @@
 # Environment overrides: VARIANTS="scen1_3d_m2 ..." REPS=3 CONTROLLER=ours
 #                        SCEN=scen1_3d_m3 BENCH_REPS=5 CONTROLLERS="ours apf ..."
 #                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1
+#                        SCHED=parallel|parallel_own|sequential (scheduling for every mode)
 set -u
 cd "$(dirname "$0")/.."
 
@@ -33,7 +34,8 @@ NOMINAL_SEEDS=${NOMINAL_SEEDS:-7}       # thesis_10seeds: seed 7 keeps the nomin
 RATIO=${RATIO:-1}
 # Identical for every method: upstream commands held until the next one, attitude
 # guard (default on) and speed guard at the plant, RotorPy.
-SETTINGS=(--speed-guard on --command-execution hold_latest)
+SCHED=${SCHED:-parallel}               # parallel | parallel_own | sequential
+SETTINGS=(--speed-guard on --command-execution hold_latest --scheduling "$SCHED")
 COMMON=(--controller "$CONTROLLER" "${SETTINGS[@]}")
 export PYTHONWARNINGS=ignore::SyntaxWarning
 mkdir -p logs runs
@@ -97,19 +99,20 @@ case "${1:-}" in
   bench-seeds)
     # One benchmark per seed, the same starts as upstream's 2D thesis runs of scen1.
     for k in $SEEDS; do
-        out=runs/seeds-$SCEN-r$RATIO/s$k
+        tag=$([ "$SCHED" = parallel ] && echo "" || echo "-$SCHED")
+        out=runs/seeds-$SCEN-r$RATIO$tag/s$k
         if [ -e "$out" ]; then echo "skip $out (exists)"; continue; fi
         jitter=$JITTER
         for n in $NOMINAL_SEEDS; do [ "$k" = "$n" ] && jitter=0; done
-        mkdir -p "runs/seeds-$SCEN-r$RATIO"
+        mkdir -p "runs/seeds-$SCEN-r$RATIO$tag"
         echo "$(date '+%F %T') start $out (jitter $jitter)  [load: $(cut -d' ' -f1-3 /proc/loadavg)]"
         jarg=(); [ "$jitter" != 0 ] && jarg=(--start-jitter "$jitter" --jitter-key scen1)
         # shellcheck disable=SC2086
         uv run uav3d benchmark --scenario "scenarios/$SCEN.yaml" "${SETTINGS[@]}" --seed "$k" \
             "${jarg[@]}" --compute-ratio "$RATIO" --controllers $CONTROLLERS --out "$out" \
-            > "logs/seeds-$SCEN-r$RATIO-s$k.log" 2>&1
+            > "logs/seeds-$SCEN-r$RATIO$tag-s$k.log" 2>&1
         echo "$(date '+%F %T') done  $out (exit $?)"
     done ;;
   *)
-    sed -n '2,20p' "$0"; exit 2 ;;
+    sed -n '2,21p' "$0"; exit 2 ;;
 esac

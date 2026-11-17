@@ -28,7 +28,9 @@ def parser():
         q.add_argument("--timings-from",help="run directory containing previously measured delays")
         q.add_argument("--scheduling",choices=SCHEDULES,default="parallel",
                        help="parallel (default): one worker per UAV, all commands delivered after "
-                            "the slowest solve; sequential: one shared worker, delays accumulate")
+                            "the slowest solve; parallel_own: one worker per UAV, each command "
+                            "delivered after its own solve; sequential: one shared worker, delays "
+                            "accumulate")
         q.add_argument("--compute-ratio",type=float,default=1.,
                        help="scale every measured planning duration by r before injecting it as "
                             "mission-time delay (e.g. 0.5: onboard computer twice as fast); default 1")

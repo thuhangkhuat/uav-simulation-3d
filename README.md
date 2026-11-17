@@ -132,6 +132,19 @@ Host solves still run one after another, each measured single-threaded, so
 `d` models dedicated hardware rather than host parallelism. Events record each
 drone's own `C_i` as `execution_s`/`injected_delay_s`; `latency_s` is `d`.
 
+`--scheduling parallel_own` keeps the same synchronous rounds (every planner
+starts at the release from the same snapshot, and the next release waits for the
+last delivery) but delivers **each UAV's command after its own solve**:
+
+```text
+release_time + C_i
+```
+
+so a slow or failed solve on one UAV no longer delays the others' commands, as
+with a dedicated computer per UAV. Commands are applied in completion order;
+events are still logged in drone order, and `latency_s` is each UAV's own `C_i`.
+`config.json` records `deployment: one_worker_per_uav_own_delivery`.
+
 `--compute-ratio r` (default `1`) models faster (or slower) planning hardware,
 e.g. a powerful onboard computer: every measured duration is multiplied by `r`
 before it is injected as mission-time delay, so with parallel scheduling the
