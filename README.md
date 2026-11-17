@@ -417,7 +417,12 @@ alongside another road), so the target's road is not the only curved one and
 the road network does not reveal the route. Grid streets keep 4 m beyond their half
 width from every obstacle; each free stretch keeps only the part between its
 outermost junctions (another street, the target's road, or the map edge), so
-nothing dead-ends; the target's road is joined to the network at both ends;
+nothing dead-ends. Wherever the target turns by 25 degrees or more, the road it
+leaves carries straight on to the next road or the map edge (when that is
+obstacle-free and does not merge along another road), so each bend reads as a
+junction where the target turns into another street. Both ends of the target's
+road likewise continue along its heading (bent up to 45 degrees if needed) to
+another road or the map edge, else join the nearest one ahead;
 streets reaching the map edge run on to the edge of the pavement; edge lines
 break at junctions. Deterministic. Then come
 buildings on rectangular obstacle footprints

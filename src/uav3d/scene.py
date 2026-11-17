@@ -323,15 +323,29 @@ def street_network(track, rects, circles, bounds, width=12., spacing=140., avenu
         if keep:
             u = np.linspace(lo, hi, max(2, int(np.ceil((hi-lo)/6.))+1))
             lines.append(np.c_[np.full_like(u, c), u] if axis == 0 else np.c_[u, np.full_like(u, c)])
-    # The target's road starts and ends mid-map: join each end to the nearest
-    # reachable point of a grid street (or the map edge) with a straight,
-    # obstacle-free connector, so the target's road does not dead-end either.
+    # Where the target turns, the road it leaves carries straight on, so each
+    # bend reads as a junction where the target turns into another street.
+    lines += _straight_on(track, lines, rects, circles, bounds, width, clear)
+    # The target's road starts and ends mid-map: carry each end on (its own
+    # heading, else bent by up to 45 degrees) to another road or the map edge;
+    # failing that, join it to the nearest reachable grid point or map edge with
+    # a straight connector, preferring ones ahead of the road over a U-turn.
     grid = np.concatenate(lines[1:]) if len(lines) > 1 else np.empty((0, 2))
-    for end in (track[0], track[-1]):
+    for end, heading in ((track[0], _heading(track[::-1], 15.)), (track[-1], _heading(track, 15.))):
+        for bend in np.radians([0, 15, -15, 30, -30, 45, -45]):
+            c, s_ = np.cos(bend), np.sin(bend)
+            stub = _extend(end, np.array([c*heading[0]-s_*heading[1], s_*heading[0]+c*heading[1]]),
+                           lines, rects, circles, bounds, width, clear)
+            if stub is not None:
+                break
+        if stub is not None:
+            lines.append(stub)
+            continue
         candidates = [np.array(p) for p in grid]
         candidates += [np.array([xmin, end[1]]), np.array([xmax, end[1]]),
                        np.array([end[0], ymin]), np.array([end[0], ymax])]
-        for goal in sorted(candidates, key=lambda q: np.linalg.norm(q-end)):
+        ahead = lambda q: (q-end)@heading < .5*np.linalg.norm(q-end)    # False first: within 60 deg
+        for goal in sorted(candidates, key=lambda q: (ahead(q), np.linalg.norm(q-end))):
             length = np.linalg.norm(goal-end)
             if length < 1.:
                 break
@@ -341,6 +355,87 @@ def street_network(track, rects, circles, bounds, width=12., spacing=140., avenu
                 break
     lines += _avenues(lines, rects, circles, bounds, width, clear, avenues, seed)
     return lines
+
+
+def _resample(line, step):
+    line = np.asarray(line, float)[:, :2]
+    arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))]
+    at = np.r_[np.arange(0., arc[-1], step), arc[-1]]
+    return np.c_[np.interp(at, arc, line[:, 0]), np.interp(at, arc, line[:, 1])]
+
+
+def _heading(path, length):
+    """Unit direction of the last `length` metres of a polyline (its exit heading)."""
+    path = np.asarray(path, float)[:, :2]
+    arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))]
+    back = path[np.searchsorted(arc, arc[-1]-length)]
+    d = path[-1]-back
+    return d/max(np.linalg.norm(d), 1e-9)
+
+
+def _extend(start, heading, lines, rects, circles, bounds, width, clear,
+            max_length=350., step=2.):
+    """Straight road from `start` along `heading` to the first road it meets or
+    the map edge, or None.
+
+    It must first leave the road it starts on (be a road width from every other
+    road within 80 m), keep `clear` from every obstacle, and meet the next road
+    at more than 25 degrees (no merging along it). The end snaps onto that road.
+    """
+    from scipy.spatial import cKDTree
+    xmin, ymin, xmax, ymax = bounds
+    pts = [_resample(l, step) for l in lines if len(l) > 1]
+    others = np.concatenate(pts)
+    owner = np.concatenate([np.full(len(q), k) for k, q in enumerate(pts)])
+    tree = cKDTree(others)
+    start, heading = np.asarray(start, float), np.asarray(heading, float)
+    left = False
+    for travelled in np.arange(step, max_length, step):
+        p = start+travelled*heading
+        if not (xmin <= p[0] <= xmax and ymin <= p[1] <= ymax):
+            end = np.clip(p, (xmin, ymin), (xmax, ymax))
+            return np.array([start, end]) if left else None
+        if _clearance(p, rects, circles)[0] < clear:
+            return None
+        d, k = tree.query(p)
+        if not left:
+            left = d >= width
+            if not left and travelled > 80.:
+                return None                     # running along its own road
+            continue
+        if d < width/2:
+            q = pts[owner[k]]
+            j = k-np.flatnonzero(owner == owner[k])[0]
+            along = q[min(j+1, len(q)-1)]-q[max(j-1, 0)]
+            along /= max(np.linalg.norm(along), 1e-9)
+            if abs(along@heading) > np.cos(np.radians(25)):
+                return None
+            return np.array([start, others[k]])
+    return None
+
+
+def _straight_on(track, lines, rects, circles, bounds, width, clear, min_turn=25., step=3.):
+    """Through roads at the target's turns: from where each bend (at least
+    `min_turn` degrees) begins, a straight road continues along the incoming
+    heading to the next road or the map edge (see _extend). Bends where that
+    is impossible keep no extra road."""
+    p = _resample(track, step)
+    if len(p) < 8:
+        return []
+    h = np.unwrap(np.arctan2(*np.diff(p, axis=0).T[::-1]))
+    dh = np.degrees(np.diff(h))
+    bending = np.flatnonzero(np.abs(dh) > 2.)
+    stubs = []
+    for group in np.split(bending, np.flatnonzero(np.diff(bending) > 3)+1) if len(bending) else []:
+        if abs(dh[group[0]:group[-1]+1].sum()) < min_turn:
+            continue
+        k = group[0]                                 # last sample before the bend
+        if k < 5:
+            continue
+        stub = _extend(p[k], _heading(p[:k+1], 15.), lines+stubs, rects, circles, bounds, width, clear)
+        if stub is not None:
+            stubs.append(stub)
+    return stubs
 
 
 def _avenues(lines, rects, circles, bounds, width, clear, count, seed, tries=80):

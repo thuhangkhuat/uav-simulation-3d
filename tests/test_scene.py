@@ -167,3 +167,19 @@ def test_avenues_cross_the_map_edge_to_edge():
         for end in (a[0], a[-1]):                              # both ends on the map edge
             assert min(end[0], 1000-end[0], end[1], 1000-end[1]) < 1e-6
         assert _clearance(a, rects, circles).min() >= 10-1e-9
+
+
+def test_target_turn_gets_a_straight_on_road():
+    import numpy as np
+    from uav3d.scene import street_network
+    # East along y=500, a 30 m-radius left turn, then north: the road the target
+    # leaves should carry straight on east, so the bend reads as a junction.
+    a = np.linspace(-np.pi/2, 0, 60)
+    track = np.r_[np.c_[np.linspace(100, 500, 200), np.full(200, 470.)],
+                  np.c_[500+30*np.cos(a), 500+30*np.sin(a)],
+                  np.c_[np.full(200, 530.), np.linspace(500, 900, 200)]]
+    lines = street_network(track, [], [], (0, 0, 1000, 1000), avenues=0)
+    stubs = [np.asarray(l) for l in lines[1:] if len(l) == 2]
+    straight = [s for s in stubs if np.linalg.norm(s[0]-[500, 470]) < 8 and
+                s[1, 0]-s[0, 0] > 30 and abs(s[1, 1]-s[0, 1]) < 2]
+    assert straight
