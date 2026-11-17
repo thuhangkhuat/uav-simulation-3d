@@ -40,10 +40,33 @@ def fit_zoom(ax, centres, points, bounds, max_z, exaggerate=True, margin=.9):
     linearly with the zoom, so they are measured in pixels once at zoom 1; the
     result leaves (1 - margin) of the half-frame as a border.
     """
+    return float(np.min(fit_zooms(ax, centres, points, bounds, max_z, exaggerate, margin),
+                        initial=np.inf))
+
+
+def smooth_zoom(required, step, window, cap=np.inf):
+    """Slowly varying zoom that never exceeds the per-sample `required` zoom.
+
+    `required` is sampled every `step` seconds. In log-zoom, a rolling minimum
+    over +-window/2 followed by a moving average over the same window: every
+    averaged value is a minimum over a window containing the current sample,
+    so the result stays <= required (all points remain in frame) while the
+    camera eases out before the team spreads and back in after it gathers.
+    """
+    log = np.log(np.minimum(np.asarray(required, float), cap))
+    h = max(0, int(round(window/2/step)))
+    n = len(log)
+    lo, hi = np.maximum(np.arange(n)-h, 0), np.minimum(np.arange(n)+h+1, n)
+    floor = np.array([log[a:b].min() for a, b in zip(lo, hi)])
+    return np.exp([floor[a:b].mean() for a, b in zip(lo, hi)])
+
+
+def fit_zooms(ax, centres, points, bounds, max_z, exaggerate=True, margin=.9):
+    """Per-frame version of `fit_zoom`: the largest zoom for each sampled frame."""
     from mpl_toolkits.mplot3d import proj3d
     ax.figure.canvas.draw()                  # settle the 2D data -> pixel transform
     half_w, half_h = ax.bbox.width/2, ax.bbox.height/2
-    zoom = np.inf
+    zooms = []
     for centre, pts in zip(centres, points):
         follow_camera(ax, centre, bounds, max_z, 1., exaggerate)
         projection = ax.get_proj()
@@ -53,8 +76,8 @@ def fit_zoom(ax, centres, points, bounds, max_z, exaggerate=True, margin=.9):
             return ax.transData.transform(np.c_[x, y])
         offset = np.abs(pixels(pts)-pixels(centre))
         with np.errstate(divide="ignore"):
-            zoom = min(zoom, margin*half_w/offset[:, 0].max(), margin*half_h/offset[:, 1].max())
-    return float(zoom)
+            zooms.append(min(margin*half_w/offset[:, 0].max(), margin*half_h/offset[:, 1].max()))
+    return np.array(zooms, float)
 
 
 def follow_camera(ax, target, bounds, max_z, zoom, exaggerate=True):
@@ -257,20 +280,37 @@ def render(args):
         ax.legend(handles=[trail.front for trail in trails]+[Patch(color=TARGET_COLOR,label="Target")],
                   loc="upper left", bbox_to_anchor=(.008, .915), fontsize=8)
     square = np.array([[-half,-half,0],[half,-half,0],[half,half,0],[-half,half,0],[-half,-half,0]])
-    if getattr(args, "fit_team", False) and following and follow_uav is None:
-        # One zoom for the whole clip: target centred, every aircraft in frame.
+    fit_team = getattr(args, "fit_team", False)
+    auto_zoom = getattr(args, "auto_zoom", False)
+    zoom_at = None                       # auto zoom: zoom as a function of mission time
+    if (fit_team or auto_zoom) and following and follow_uav is None:
+        # Target (or team) centred, every aircraft in frame: one zoom for the
+        # whole clip (--fit-team) or a smoothly varying one (--auto-zoom).
+        window = 3.*args.speed                  # ~3 s of video for each zoom change
+        step = min(.25, window/12) if auto_zoom else .25
         if output.suffix.lower()==".png":
-            moments = [times[-1] if args.time is None else args.time]
+            moments = np.array([times[-1] if args.time is None else args.time])
         else:
-            moments = np.r_[np.arange(start,end,.25),end]
+            moments = np.r_[np.arange(start,end,step),end]
         rows = [max(0,min(len(times)-1,np.searchsorted(times,t,side="right")-1)) for t in moments]
         centres = [targets[k] if camera != "team" else (states[k,:,:3].mean(axis=0)+targets[k])/2
                    for k in rows]
-        zoom = fit_zoom(ax, centres, [states[k,:,:3] for k in rows], (xmin,ymin,xmax,ymax),
-                        max_z, exaggerate=not true_scale)
-        print(f"--fit-team: zoom {zoom:.1f}")
+        required = fit_zooms(ax, centres, [states[k,:,:3] for k in rows], (xmin,ymin,xmax,ymax),
+                             max_z, exaggerate=not true_scale)
+        if auto_zoom:
+            # Never closer than --zoom (or its default) when the team gathers.
+            schedule = smooth_zoom(required, step, window, cap=zoom)
+            zoom_at = lambda t: float(np.interp(t, moments, schedule))
+            print(f"--auto-zoom: zoom {schedule.min():.1f}-{schedule.max():.1f} "
+                  f"(cap {zoom:g}, window {window:g} s)")
+        else:
+            zoom = float(required.min())
+            print(f"--fit-team: zoom {zoom:.1f}")
 
     def update(t):
+        nonlocal zoom
+        if zoom_at is not None:
+            zoom = zoom_at(t)
         index = max(0,min(len(times)-1,np.searchsorted(times,t,side="right")-1))
         s = states[index]
         # Set the camera first: occlusion is tested against this frame's view.
@@ -314,8 +354,8 @@ def render(args):
         vehicle.set_layer(*((HIDDEN_LAYER, .01) if not subject and occluded(
             projection, np.r_[targets[index,:2],1.], boxes)[0] else (0., 1.)))
         camera_label = (f"UAV {follow_uav} close-up · zoom ×{zoom:g}" if follow_uav is not None else
-                        f"Team camera · zoom ×{zoom:g}" if camera == "team" else
-                        f"Target-follow camera · zoom ×{zoom:g}" if following else "Full-map camera")
+                        f"Team camera · zoom ×{zoom:.1f}" if camera == "team" else
+                        f"Target-follow camera · zoom ×{zoom:.1f}" if following else "Full-map camera")
         size_label = "true-scale aircraft" if true_scale else "enlarged aircraft glyphs"
         if title is not None:
             title.set_text(f"{cfg['scenario']} · {cfg['controller']} · {n} UAVs · t = {times[index]:.3f} s\n"

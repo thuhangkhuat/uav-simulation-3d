@@ -165,3 +165,22 @@ def test_fit_zoom_keeps_points_in_frame():
     assert offset[:, 0].max() <= .9*ax.bbox.width/2+1 and offset[:, 1].max() <= .9*ax.bbox.height/2+1
     assert max(offset[:, 0].max()/(ax.bbox.width/2), offset[:, 1].max()/(ax.bbox.height/2)) > .89
     plt.close(fig)
+
+
+def test_smooth_zoom_stays_within_required_and_cap():
+    from uav3d.replay import smooth_zoom
+    t = np.arange(0, 20, .25)
+    required = 20/(1+np.where((t > 5) & (t < 9), 1.5, 0.)) + 3*np.sin(t)   # a sudden spread
+    zoom = smooth_zoom(required, .25, 3., cap=18.)
+    assert zoom.shape == required.shape
+    assert np.all(zoom <= np.minimum(required, 18.)+1e-9)
+    # Eases instead of jumping: the per-sample change is far smaller than the step.
+    assert np.abs(np.diff(np.log(zoom))).max() < .5*np.abs(np.diff(np.log(required))).max()
+    np.testing.assert_allclose(smooth_zoom([5., 5., 5.], .25, 3.), 5.)
+
+
+def test_auto_zoom_option_parses_and_excludes_fit_team():
+    args = parser().parse_args(["replay", "runs/x", "--auto-zoom"])
+    assert args.auto_zoom and not args.fit_team
+    with pytest.raises(SystemExit):
+        parser().parse_args(["replay", "runs/x", "--auto-zoom", "--fit-team"])

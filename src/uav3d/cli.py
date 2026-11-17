@@ -85,9 +85,14 @@ def parser():
     q.add_argument("--elevation",type=float,default=None,metavar="DEG",
                    help="camera elevation above the horizon (default 55; 80 with --follow-uav, "
                         "35 for --camera overview); 90 = straight down")
-    q.add_argument("--fit-team",action="store_true",
+    fit = q.add_mutually_exclusive_group()
+    fit.add_argument("--fit-team",action="store_true",
                    help="target-follow camera: pick one zoom for the whole clip so that every "
                         "aircraft stays in frame (overrides --zoom)")
+    fit.add_argument("--auto-zoom",action="store_true",
+                   help="like --fit-team, but the zoom eases in and out over time (about 3 s "
+                        "of video per change) to keep every aircraft in frame; --zoom (or its "
+                        "default) is the closest it gets")
     q.add_argument("--uav-scale",type=float,default=None,metavar="K",
                    help="draw the aircraft K times larger (illustration only)")
     q.add_argument("--target-scale",type=float,default=None,metavar="K",
