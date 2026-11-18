@@ -137,8 +137,8 @@ def fmt(fmtstr, values):
     if not vals:
         return "-"
     s = fmtstr.format(np.mean(vals))
-    if len(values) > 1:
-        s += " ± "+fmtstr.format(np.std(vals))
+    if len(vals) > 1:
+        s += " ± "+fmtstr.format(np.std(vals, ddof=1))
     return s+("" if len(vals) == len(values) else f" ({len(vals)}/{len(values)})")
 
 

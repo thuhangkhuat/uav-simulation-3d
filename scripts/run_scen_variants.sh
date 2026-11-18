@@ -10,14 +10,16 @@
 #   bash scripts/run_scen_variants.sh bench-r0     # r = 0, five methods in parallel
 #   bash scripts/run_scen_variants.sh bench-r1     # r = 1, BENCH_REPS benchmarks, one at a time
 #   bash scripts/run_scen_variants.sh bench-seeds  # r = 1, one benchmark per seed with the 2D
-#        thesis starts: --seed k --start-jitter 20 --jitter-key scen1 (seed 7: no jitter)
+#        thesis starts: --seed k --start-jitter 20 --jitter-key $JITTER_KEY (seed 7: no jitter)
+#   Nine UAVs (scenarios/scen3_3d_n9.yaml, from scripts/make_scen3_3d_n9.py):
+#        SCEN=scen3_3d_n9 JITTER_KEY=scen3 SCHED=parallel_own bash scripts/run_scen_variants.sh bench-seeds
 #
 # Run r0/r1 in the background so they survive an SSH disconnect, e.g.
 #   nohup bash scripts/run_scen_variants.sh r1 > logs/scen-variants-r1.log 2>&1 &
 # Existing run directories are skipped, so an interrupted r1 batch can be resumed.
 # Environment overrides: VARIANTS="scen1_3d_m2 ..." REPS=3 CONTROLLER=ours
 #                        SCEN=scen1_3d_m3 BENCH_REPS=5 CONTROLLERS="ours apf ..."
-#                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1
+#                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1 JITTER_KEY=scen1
 #                        SCHED=parallel|parallel_own|sequential (scheduling for every mode)
 set -u
 cd "$(dirname "$0")/.."
@@ -31,6 +33,7 @@ CONTROLLERS=${CONTROLLERS:-"ours apf pure_mpc cbf_qp_lag impc_ob_rec"}
 SEEDS=${SEEDS:-"1 2 3 4 5 6 7 8 9 10"}
 JITTER=${JITTER:-20}
 NOMINAL_SEEDS=${NOMINAL_SEEDS:-7}       # thesis_10seeds: seed 7 keeps the nominal starts
+JITTER_KEY=${JITTER_KEY:-scen1}         # upstream scenario name seeding the jitter (scen3 for scen3_3d_n9)
 RATIO=${RATIO:-1}
 # Identical for every method: upstream commands held until the next one, attitude
 # guard (default on) and speed guard at the plant, RotorPy.
@@ -106,7 +109,7 @@ case "${1:-}" in
         for n in $NOMINAL_SEEDS; do [ "$k" = "$n" ] && jitter=0; done
         mkdir -p "runs/seeds-$SCEN-r$RATIO$tag"
         echo "$(date '+%F %T') start $out (jitter $jitter)  [load: $(cut -d' ' -f1-3 /proc/loadavg)]"
-        jarg=(); [ "$jitter" != 0 ] && jarg=(--start-jitter "$jitter" --jitter-key scen1)
+        jarg=(); [ "$jitter" != 0 ] && jarg=(--start-jitter "$jitter" --jitter-key "$JITTER_KEY")
         # shellcheck disable=SC2086
         uv run uav3d benchmark --scenario "scenarios/$SCEN.yaml" "${SETTINGS[@]}" --seed "$k" \
             "${jarg[@]}" --compute-ratio "$RATIO" --controllers $CONTROLLERS --out "$out" \
@@ -114,5 +117,5 @@ case "${1:-}" in
         echo "$(date '+%F %T') done  $out (exit $?)"
     done ;;
   *)
-    sed -n '2,21p' "$0"; exit 2 ;;
+    sed -n '2,23p' "$0"; exit 2 ;;
 esac
