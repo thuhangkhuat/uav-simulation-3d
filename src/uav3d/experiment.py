@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import heapq
 import time
 import numpy as np
 from .physics import IdealBackend, RotorPyBackend, guard_settings, speed_guard_settings
@@ -185,6 +186,8 @@ def run(args):
     replay_config = None
     timings = None
     if args.timings_from:
+        if args.scheduling == "async":
+            raise ValueError("Timing replay does not support --scheduling async")
         source = Path(args.timings_from)
         replay_config = json.loads((source/"config.json").read_text())
         expected = (cfg.SCENARIO_NAME,cfg.CONTROLLER,args.seed,starts.tolist(),horizon)
@@ -232,7 +235,8 @@ def run(args):
                                             accept_speed_error=upstream.ACCEPT_SPEED_ERROR)
                          if follow_plan else None,
                          deployment={"parallel":"one_worker_per_uav",
-                                     "parallel_own":"one_worker_per_uav_own_delivery"}.get(
+                                     "parallel_own":"one_worker_per_uav_own_delivery",
+                                     "async":"one_worker_per_uav_async"}.get(
                                          args.scheduling,"shared_ground_cpu_sequential"),order="ascending_drone_id",
                          physics=("upstream_dynamics_ideal" if physics == "ideal"
                                   else "rotorpy_hummingbird_cmd_acc"),aerodynamics=False,
@@ -257,11 +261,145 @@ def run(args):
         sim.hit = dict(time=0.,reason=initial.reason,drones=list(initial.drones))
     release,round_index,skipped = 0.,0,0
     events,plans,plan_epochs,plan_drones = [],[],[],[]
+    # Aircraft observations stay frozen while planning. The physical plant
+    # advances separately; no later UAV accidentally sees a future pose.
+    # plan() reads the current `release` and `round_index` of the loop below.
+    def plan(i, robot, offset):
+        robot.requested_command = None
+        robot.used_backup = False
+        backup = getattr(robot,"_backup",None)
+        before = time.perf_counter()
+        robot.computeControlSignal(robots)
+        measured = time.perf_counter()-before
+        if robot.requested_command is None:
+            raise RuntimeError("Upstream failed to issue an acceleration command")
+        robot.prediction_epoch = release
+        # Built outside the timed call; the shifted buffers change next round.
+        robot.schedule,robot.stop_current = (upstream.plan_schedule(robot,cfg,release,backup)
+                                             if follow_plan else (None,False))
+        if timings is not None:
+            index = len(events)+offset
+            if index >= len(timings):
+                raise ValueError("Timing replay exhausted before mission completion")
+            recorded = timings[index]
+            if recorded["round"] != round_index or recorded["drone"] != i:
+                raise ValueError("Timing replay planning sequence does not match")
+            delay = scaled_delay(float(recorded["injected_delay_s"])/source_ratio,ratio)
+        else:
+            delay = scaled_delay(measured,ratio)
+        if not np.isfinite(delay) or delay < 0:
+            raise ValueError("Invalid recorded computation duration")
+        return measured,delay
+
+    def deliver(event, robot, log=True):
+        record = asdict(event)|dict(queue_wait_s=event.queue_wait_s,latency_s=event.latency_s,
+                                   requested_command=robot.requested_command.tolist(),delivered=False,
+                                   upstream_stop=bool(robot.stop_current))
+        if sim.hit is None and event.completed_at <= horizon+1e-12:
+            backend.commands[event.drone] = robot.requested_command
+            current = sim.schedules[event.drone]
+            if robot.stop_current and current is not None:
+                # Upstream fell back to stopping. The aircraft flew the current
+                # plan, not the backup branch, so it stops along that plan now,
+                # and publishes that stop as its prediction.
+                sim.schedules[event.drone] = current.stopped(sim.t)
+                upstream.publish_prediction(robot,sim.schedules[event.drone],event.observed_at)
+            elif robot.schedule is not None and current is not None and not upstream.plan_valid(
+                    robot.schedule,sim.t,backend.positions()[event.drone],
+                    backend.velocities()[event.drone],cfg):
+                # Stale: solved for a state the aircraft has left. Keep flying
+                # (or stopping along) the current plan and publish that instead.
+                record["accepted"] = False
+                upstream.publish_prediction(robot,current,event.observed_at)
+            else:
+                sim.schedules[event.drone] = robot.schedule
+            if sim.schedules[event.drone] is not None:
+                # Delivered late: continue at the plan step for now, not U[0].
+                sim.apply_schedules(sim.t)
+            sim.status[event.drone] = (robot.mode == cfg.MODE_TRACK,robot.is_leader_role,
+                                       getattr(robot,"mpc_fail_streak",0))
+            record["delivered"] = True
+            plans.append(robot.states_prediction.copy())
+            plan_epochs.append([event.observed_at,event.completed_at])
+            plan_drones.append(event.drone)
+        if log:
+            write_event(record)
+        return record
+
+    def write_event(record):
+        events.append(record)
+        # Persist events as they complete, so partial runs are inspectable.
+        with (out/"events.jsonl").open("a") as f:
+            f.write(json.dumps(record)+"\n")
+
     wall_start = time.perf_counter()
     interrupted = False
     failure = None
     try:
-        while release < horizon-1e-12 and sim.hit is None:
+        if args.scheduling == "async":
+            # One computer per UAV, no team round: each UAV replans at the first
+            # period boundary after its own command was delivered, so a slow or
+            # failed solve delays only that UAV. Its new prediction becomes
+            # visible to the others when its command is delivered (release + C_i);
+            # until then they see its previous one, aged to their own release.
+            period = cfg.TIMESTEP
+            published = [(r.states_prediction,getattr(r,"prediction_epoch",0.)) for r in robots]
+            pending = {}
+            queue = [(0.,1,i) for i in range(len(robots))]     # (time, 0 deliver | 1 release, drone)
+            heapq.heapify(queue)
+            while queue and sim.hit is None:
+                t,kind,i = heapq.heappop(queue)
+                if t >= horizon-1e-12:
+                    break
+                sim.advance(t)
+                if sim.hit:
+                    break
+                robot = robots[i]
+                if kind == 0:
+                    event,prediction,epoch = pending.pop(i)
+                    robot.states_prediction,robot.prediction_epoch = prediction,epoch
+                    deliver(event,robot)
+                    sim.sample()
+                    published[i] = (robot.states_prediction,robot.prediction_epoch)
+                    following,missed = next_release(t,event.observed_at,period)
+                    skipped += missed
+                    heapq.heappush(queue,(following,1,i))
+                    continue
+                release,round_index = t,int(round(t/period))
+                # Sensing: every aircraft's current pose and acceleration.
+                pv,net_acc = backend.observations()
+                for j,other in enumerate(robots):
+                    other.state = pv[j].copy()
+                    other.accel = net_acc[j]+cfg.D_FRAC*pv[j,3:6]
+                    other.control = backend.commands[j].copy()
+                # This UAV's own buffers age from its last published plan.
+                own,epoch = published[i]
+                robot.states_prediction = None if own is None else own.copy()
+                robot.prediction_epoch = epoch
+                upstream.age_robot(robot,release,period)
+                robot.time_stamp = release
+                robot.goal = sim.target(release).copy()
+                if hasattr(robot,"last_observation"):
+                    upstream.set_tracker_interval(robot.target_tracker,release-robot.last_observation)
+                robot.last_observation = release
+                # Teammates expose their published predictions, aligned to this release.
+                for j,other in enumerate(robots):
+                    if j != i:
+                        view,their = published[j]
+                        view = None if view is None else view.copy()
+                        upstream.shift_rows(view,max(0,int(np.floor((release-their)/period+1e-9))))
+                        other.states_prediction = view
+                try:
+                    measured,delay = plan(i,robot,0)
+                finally:
+                    for j,other in enumerate(robots):
+                        if j != i:
+                            other.states_prediction = published[j][0]
+                event = PlanningEvent(round_index,i,release,release,release+delay,measured,delay)
+                pending[i] = (event,robot.states_prediction,robot.prediction_epoch)
+                robot.states_prediction = published[i][0]
+                heapq.heappush(queue,(event.completed_at,0,i))
+        while args.scheduling != "async" and release < horizon-1e-12 and sim.hit is None:
             sim.advance(release)
             if sim.hit:
                 break
@@ -276,76 +414,6 @@ def run(args):
                 if hasattr(robot,"last_observation"):
                     upstream.set_tracker_interval(robot.target_tracker,release-robot.last_observation)
                 robot.last_observation = release
-            # Aircraft observations stay frozen for this round. The physical plant
-            # advances separately; no later UAV accidentally sees a future pose.
-            def plan(i, robot, offset):
-                robot.requested_command = None
-                robot.used_backup = False
-                backup = getattr(robot,"_backup",None)
-                before = time.perf_counter()
-                robot.computeControlSignal(robots)
-                measured = time.perf_counter()-before
-                if robot.requested_command is None:
-                    raise RuntimeError("Upstream failed to issue an acceleration command")
-                robot.prediction_epoch = release
-                # Built outside the timed call; the shifted buffers change next round.
-                robot.schedule,robot.stop_current = (upstream.plan_schedule(robot,cfg,release,backup)
-                                                     if follow_plan else (None,False))
-                if timings is not None:
-                    index = len(events)+offset
-                    if index >= len(timings):
-                        raise ValueError("Timing replay exhausted before mission completion")
-                    recorded = timings[index]
-                    if recorded["round"] != round_index or recorded["drone"] != i:
-                        raise ValueError("Timing replay planning sequence does not match")
-                    delay = scaled_delay(float(recorded["injected_delay_s"])/source_ratio,ratio)
-                else:
-                    delay = scaled_delay(measured,ratio)
-                if not np.isfinite(delay) or delay < 0:
-                    raise ValueError("Invalid recorded computation duration")
-                return measured,delay
-
-            def deliver(event, robot, log=True):
-                record = asdict(event)|dict(queue_wait_s=event.queue_wait_s,latency_s=event.latency_s,
-                                           requested_command=robot.requested_command.tolist(),delivered=False,
-                                           upstream_stop=bool(robot.stop_current))
-                if sim.hit is None and event.completed_at <= horizon+1e-12:
-                    backend.commands[event.drone] = robot.requested_command
-                    current = sim.schedules[event.drone]
-                    if robot.stop_current and current is not None:
-                        # Upstream fell back to stopping. The aircraft flew the current
-                        # plan, not the backup branch, so it stops along that plan now,
-                        # and publishes that stop as its prediction.
-                        sim.schedules[event.drone] = current.stopped(sim.t)
-                        upstream.publish_prediction(robot,sim.schedules[event.drone],release)
-                    elif robot.schedule is not None and current is not None and not upstream.plan_valid(
-                            robot.schedule,sim.t,backend.positions()[event.drone],
-                            backend.velocities()[event.drone],cfg):
-                        # Stale: solved for a state the aircraft has left. Keep flying
-                        # (or stopping along) the current plan and publish that instead.
-                        record["accepted"] = False
-                        upstream.publish_prediction(robot,current,release)
-                    else:
-                        sim.schedules[event.drone] = robot.schedule
-                    if sim.schedules[event.drone] is not None:
-                        # Delivered late: continue at the plan step for now, not U[0].
-                        sim.apply_schedules(sim.t)
-                    sim.status[event.drone] = (robot.mode == cfg.MODE_TRACK,robot.is_leader_role,
-                                               getattr(robot,"mpc_fail_streak",0))
-                    record["delivered"] = True
-                    plans.append(robot.states_prediction.copy())
-                    plan_epochs.append([release,event.completed_at])
-                    plan_drones.append(event.drone)
-                if log:
-                    write_event(record)
-                return record
-
-            def write_event(record):
-                events.append(record)
-                # Persist events as they complete, so partial runs are inspectable.
-                with (out/"events.jsonl").open("a") as f:
-                    f.write(json.dumps(record)+"\n")
-
             if args.scheduling == "parallel_own":
                 # One worker per UAV, each command delivered when that UAV's own
                 # solve ends (release + C_i): a slow or failed solve elsewhere no

@@ -12,7 +12,7 @@
 #   bash scripts/run_scen_variants.sh bench-seeds  # r = 1, one benchmark per seed with the 2D
 #        thesis starts: --seed k --start-jitter 20 --jitter-key $JITTER_KEY (seed 7: no jitter)
 #   Nine UAVs (scenarios/scen3_3d_n9.yaml, from scripts/make_scen3_3d_n9.py):
-#        SCEN=scen3_3d_n9 JITTER_KEY=scen3 SCHED=parallel_own bash scripts/run_scen_variants.sh bench-seeds
+#        SCEN=scen3_3d_n9 JITTER_KEY=scen3 SCHED=async bash scripts/run_scen_variants.sh bench-seeds
 #
 # Run r0/r1 in the background so they survive an SSH disconnect, e.g.
 #   nohup bash scripts/run_scen_variants.sh r1 > logs/scen-variants-r1.log 2>&1 &
@@ -20,7 +20,7 @@
 # Environment overrides: VARIANTS="scen1_3d_m2 ..." REPS=3 CONTROLLER=ours
 #                        SCEN=scen1_3d_m3 BENCH_REPS=5 CONTROLLERS="ours apf ..."
 #                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1 JITTER_KEY=scen1
-#                        SCHED=parallel|parallel_own|sequential (scheduling for every mode)
+#                        SCHED=parallel|parallel_own|sequential|async (scheduling for every mode)
 set -u
 cd "$(dirname "$0")/.."
 
@@ -37,7 +37,7 @@ JITTER_KEY=${JITTER_KEY:-scen1}         # upstream scenario name seeding the jit
 RATIO=${RATIO:-1}
 # Identical for every method: upstream commands held until the next one, attitude
 # guard (default on) and speed guard at the plant, RotorPy.
-SCHED=${SCHED:-parallel}               # parallel | parallel_own | sequential
+SCHED=${SCHED:-parallel}               # parallel | parallel_own | sequential | async
 SETTINGS=(--speed-guard on --command-execution hold_latest --scheduling "$SCHED")
 COMMON=(--controller "$CONTROLLER" "${SETTINGS[@]}")
 export PYTHONWARNINGS=ignore::SyntaxWarning

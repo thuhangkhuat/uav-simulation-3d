@@ -14,7 +14,8 @@ converts a uav3d run into main.py's data.pkl layout:
   * path rows [t, x, y, z, vx, vy, vz, u(3), a(3)] (a left 0, unused), status
     rows [TRACK, leader, fail streak] as recorded by the adapter;
   * compute_times = each planning call's measured duration (execution_s), per
-    round and UAV, before the first collision.
+    round and UAV, before the first collision (with --scheduling async, which has
+    no team rounds, every solve before the first collision).
 
 Differences from the 2D pipeline, both forced by the 3D run itself:
   * the first collision t_c comes from the adapter's continuous collision check
@@ -85,7 +86,12 @@ def convert(run_dir):
     for e in events:
         if e["observed_at"] < tc:
             rounds.setdefault(e["round"],{})[e["drone"]] = e["execution_s"]
-    ct = [rounds[r][i] for r in sorted(rounds) if len(rounds[r]) == n for i in range(n)]
+    if cfg.get("scheduling") == "async":
+        # No team rounds: every UAV solves on its own clock; keep every solve.
+        ct = [e["execution_s"] for e in sorted(events,key=lambda e: (e["observed_at"],e["drone"]))
+              if e["observed_at"] < tc]
+    else:
+        ct = [rounds[r][i] for r in sorted(rounds) if len(rounds[r]) == n for i in range(n)]
     data = {i:dict(path=path[:,i],tar_traj=target[idx],status=status[idx,i].astype(np.int16))
             for i in range(n)}
     data["meta"] = dict(compute_times=np.asarray(ct,float),

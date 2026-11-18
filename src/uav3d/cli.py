@@ -30,7 +30,8 @@ def parser():
                        help="parallel (default): one worker per UAV, all commands delivered after "
                             "the slowest solve; parallel_own: one worker per UAV, each command "
                             "delivered after its own solve; sequential: one shared worker, delays "
-                            "accumulate")
+                            "accumulate; async: one worker per UAV and no team round, each UAV "
+                            "replans after its own delivery")
         q.add_argument("--compute-ratio",type=float,default=1.,
                        help="scale every measured planning duration by r before injecting it as "
                             "mission-time delay (e.g. 0.5: onboard computer twice as fast); default 1")

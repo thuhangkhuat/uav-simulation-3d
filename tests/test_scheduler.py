@@ -237,3 +237,37 @@ def test_cli_accepts_parallel_own():
     args = parser().parse_args(["run","--scheduling","parallel_own"])
     command = worker_command(args,"ours","runs/x")
     assert command[command.index("--scheduling")+1] == "parallel_own"
+
+
+def test_cli_accepts_async():
+    from uav3d.cli import parser, worker_command
+    args = parser().parse_args(["run","--scheduling","async"])
+    command = worker_command(args,"ours","runs/x")
+    assert command[command.index("--scheduling")+1] == "async"
+
+
+def test_async_mission_each_uav_on_its_own_clock(tmp_path):
+    """Short real mission: every UAV starts at 0, replans on the period grid at or
+    after its own delivery, and its command arrives at release + C_i."""
+    import json, math
+    from uav3d.cli import main
+    out = tmp_path/"async"
+    # A large compute ratio turns apf's sub-ms solves into multi-period delays.
+    assert main(["run","--controller","apf","--scheduling","async","--command-execution","hold_latest",
+                 "--speed-guard","on","--compute-ratio","400","--duration","1","--out",str(out)]) == 0
+    config = json.loads((out/"config.json").read_text())
+    assert config["scheduling"] == "async" and config["deployment"] == "one_worker_per_uav_async"
+    events = [json.loads(l) for l in (out/"events.jsonl").read_text().splitlines()]
+    assert {e["drone"] for e in events if e["observed_at"] == 0} == set(range(5))
+    period = config["planning_period"]
+    for drone in range(5):
+        mine = sorted((e for e in events if e["drone"] == drone), key=lambda e: e["observed_at"])
+        assert len(mine) >= 2
+        for e in mine:
+            assert e["completed_at"] == pytest.approx(e["observed_at"]+e["injected_delay_s"])
+            assert e["round"] == round(e["observed_at"]/period)
+            assert abs(e["observed_at"]/period-round(e["observed_at"]/period)) < 1e-6
+        for a, b in zip(mine, mine[1:]):
+            # Next release: the first grid point at or after the delivery, never the same one.
+            expected = max(a["observed_at"]+period, math.ceil(a["completed_at"]/period-1e-10)*period)
+            assert b["observed_at"] == pytest.approx(expected)

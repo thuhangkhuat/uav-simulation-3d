@@ -97,7 +97,8 @@ Eight obstacles are shifted by 15-40 m, three are removed and three are added. N
 moved obstacles follow the spacing rules of upstream's obstacle generator: 30 m from the
 target legs and waypoints, 24 m from starts, 15 m between obstacles. Use
 `--jitter-key scen3`, so seeds draw the same way as upstream's 2D `scen3` seeds:
-`SCEN=scen3_3d_n9 JITTER_KEY=scen3 SCHED=parallel_own bash scripts/run_scen_variants.sh bench-seeds`.
+`SCEN=scen3_3d_n9 JITTER_KEY=scen3 SCHED=async bash scripts/run_scen_variants.sh bench-seeds`
+(nine UAVs use `async`: see `--scheduling async` below).
 
 `--param KEY=VALUE` (repeatable; `VALUE` is YAML) overrides an upstream config
 constant without touching the submodule: the adapter copies the scenario YAML
@@ -157,6 +158,27 @@ so a slow or failed solve on one UAV no longer delays the others' commands, as
 with a dedicated computer per UAV. Commands are applied in completion order;
 events are still logged in drone order, and `latency_s` is each UAV's own `C_i`.
 `config.json` records `deployment: one_worker_per_uav_own_delivery`.
+
+`--scheduling async` drops the team round as well: one computer per UAV, each
+on its own clock. UAV `i` observes and plans at a release `r_i`, and its command
+is delivered at `r_i + C_i`. It plans again at the first period boundary at or
+after that delivery, whatever the other UAVs are doing:
+
+```text
+deliver_i = r_i + C_i,   r_i' = first k*TIMESTEP >= deliver_i (and > r_i)
+```
+
+A slow or failed solve therefore delays only that UAV. In the rounds of
+`parallel_own`, one failed solve (up to ~1 s) held every UAV's command; with nine
+UAVs that happened almost every round. When `i` plans, it senses every
+aircraft's current pose. It sees each teammate's last *published* prediction,
+aged to `r_i`. A teammate publishes its new prediction when its command is
+delivered, not when the solve starts, the same convention as the snapshot of
+the synchronous modes. Other teammate state that upstream shares between UAVs
+(modes, IMPC priority flags) is visible as soon as it is computed, as in the
+other modes. Events are logged in delivery order. `round` is the release tick
+`round(r_i / TIMESTEP)`. `config.json` records `deployment:
+one_worker_per_uav_async`. `--timings-from` does not support `async`.
 
 `--compute-ratio r` (default `1`) models faster (or slower) planning hardware,
 e.g. a powerful onboard computer: every measured duration is multiplied by `r`
