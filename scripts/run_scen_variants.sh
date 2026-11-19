@@ -21,6 +21,7 @@
 #                        SCEN=scen1_3d_m3 BENCH_REPS=5 CONTROLLERS="ours apf ..."
 #                        SEEDS="1 2 ... 10" JITTER=20 NOMINAL_SEEDS="7" RATIO=1 JITTER_KEY=scen1
 #                        SCHED=parallel|parallel_own|sequential|async (scheduling for every mode)
+#                        OUT_SUFFIX=-sep (bench-seeds: runs/seeds-$SCEN-r1[-$SCHED]$OUT_SUFFIX/sK)
 set -u
 cd "$(dirname "$0")/.."
 
@@ -35,6 +36,7 @@ JITTER=${JITTER:-20}
 NOMINAL_SEEDS=${NOMINAL_SEEDS:-7}       # thesis_10seeds: seed 7 keeps the nominal starts
 JITTER_KEY=${JITTER_KEY:-scen1}         # upstream scenario name seeding the jitter (scen3 for scen3_3d_n9)
 RATIO=${RATIO:-1}
+OUT_SUFFIX=${OUT_SUFFIX:-}                # bench-seeds: a new batch next to an existing one
 # Identical for every method: upstream commands held until the next one, attitude
 # guard (default on) and speed guard at the plant, RotorPy.
 SCHED=${SCHED:-parallel}               # parallel | parallel_own | sequential | async
@@ -103,6 +105,7 @@ case "${1:-}" in
     # One benchmark per seed, the same starts as upstream's 2D thesis runs of scen1.
     for k in $SEEDS; do
         tag=$([ "$SCHED" = parallel ] && echo "" || echo "-$SCHED")
+        tag=$tag$OUT_SUFFIX
         out=runs/seeds-$SCEN-r$RATIO$tag/s$k
         if [ -e "$out" ]; then echo "skip $out (exists)"; continue; fi
         jitter=$JITTER
@@ -117,5 +120,5 @@ case "${1:-}" in
         echo "$(date '+%F %T') done  $out (exit $?)"
     done ;;
   *)
-    sed -n '2,23p' "$0"; exit 2 ;;
+    sed -n '2,24p' "$0"; exit 2 ;;
 esac

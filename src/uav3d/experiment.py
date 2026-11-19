@@ -220,6 +220,8 @@ def run(args):
                          horizon_s=horizon,full_target_duration_s=full_duration,
                          physics_dt=args.physics_dt,planning_period=cfg.TIMESTEP,
                          scheduling=args.scheduling,command_execution=execution,
+                         backup_commit=("published_at_delivery"
+                                        if getattr(cfg,"BACKUP_SEPARATION",False) else None),
                          compute_ratio=ratio,
                          param_overrides=params or None,
                          target_speed_cap=speed_cap,
@@ -273,6 +275,7 @@ def run(args):
         measured = time.perf_counter()-before
         if robot.requested_command is None:
             raise RuntimeError("Upstream failed to issue an acceleration command")
+        upstream.hold_commit(robot)        # separating planes: visible at delivery
         robot.prediction_epoch = release
         # Built outside the timed call; the shifted buffers change next round.
         robot.schedule,robot.stop_current = (upstream.plan_schedule(robot,cfg,release,backup)
@@ -313,6 +316,8 @@ def run(args):
                 upstream.publish_prediction(robot,current,event.observed_at)
             else:
                 sim.schedules[event.drone] = robot.schedule
+            if record.get("accepted",True) and not robot.stop_current:
+                upstream.publish_commit(robot)
             if sim.schedules[event.drone] is not None:
                 # Delivered late: continue at the plan step for now, not U[0].
                 sim.apply_schedules(sim.t)

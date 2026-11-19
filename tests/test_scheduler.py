@@ -271,3 +271,17 @@ def test_async_mission_each_uav_on_its_own_clock(tmp_path):
             # Next release: the first grid point at or after the delivery, never the same one.
             expected = max(a["observed_at"]+period, math.ceil(a["completed_at"]/period-1e-10)*period)
             assert b["observed_at"] == pytest.approx(expected)
+
+
+def test_async_ours_records_backup_commit_at_delivery(tmp_path):
+    """ours with upstream's separating planes: the run records the setting and that
+    commits become visible at delivery; the mission runs."""
+    import json
+    from uav3d.cli import main
+    out = tmp_path/"ours-async"
+    assert main(["run","--controller","ours","--scheduling","async","--command-execution","hold_latest",
+                 "--speed-guard","on","--duration","0.5","--out",str(out)]) == 0
+    config = json.loads((out/"config.json").read_text())
+    assert config["params"]["BACKUP_SEPARATION"] is True
+    assert config["backup_commit"] == "published_at_delivery"
+    assert json.loads((out/"result.json").read_text())["status"] == "completed"

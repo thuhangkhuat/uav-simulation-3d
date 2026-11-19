@@ -23,7 +23,7 @@ uv run pytest -q
 `uv` creates `.venv` automatically. Dependencies are locked, including RotorPy
 at `40b09697a6a1596d404a67f459941d46a39eedd3`, `pycddlib<3`, and `pyny3d==0.1.1`.
 The latter satisfies upstream while avoiding a malformed newer wheel.
-Upstream is pinned to `188edd780e40e771cba37ecd5c6a50ca37f2f89f`.
+Upstream is pinned to `d65d3cb885c8a2f6a66d5c7bfb3061860f6e30dc` (2026-11-19: adds separating planes on the backup branch, `BACKUP_SEPARATION`, on by default, and the MADER baseline; the results before it used `188edd780e40e771cba37ecd5c6a50ca37f2f89f`).
 Use an editable project checkout; `UAV3D_UPSTREAM` can override the submodule
 location if the adapter is installed elsewhere.
 
@@ -179,6 +179,19 @@ the synchronous modes. Other teammate state that upstream shares between UAVs
 other modes. Events are logged in delivery order. `round` is the release tick
 `round(r_i / TIMESTEP)`. `config.json` records `deployment:
 one_worker_per_uav_async`. `--timings-from` does not support `async`.
+
+**Committed backups (compatibility layer, every mode).** With upstream's
+separating planes (`BACKUP_SEPARATION`, on by default since `d65d3cb`), a UAV
+keeps its new backup branch clear of each teammate's *committed* backup
+(`_bk_commit`), which upstream sets inside the solve. The adapter treats it like
+the prediction: a new commit becomes visible, to the teammates and to the UAV's
+own next planes, only when its command is delivered and accepted (`async`:
+`r_i + C_i`; `parallel`: after the round; `sequential`: after that UAV's solve).
+A rejected (stale) plan or a fallback stop publishes nothing. `config.json`
+records `backup_commit: published_at_delivery`. Upstream's guarantee assumes each
+UAV flies its committed backup exactly. Under delay and 6-DoF dynamics it holds
+only approximately. `BACKUP_SEPARATION=0` in the environment turns the planes
+off (the results before `d65d3cb`).
 
 `--compute-ratio r` (default `1`) models faster (or slower) planning hardware,
 e.g. a powerful onboard computer: every measured duration is multiplied by `r`

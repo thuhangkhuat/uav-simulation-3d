@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from uav3d.cli import parser
-from uav3d.upstream import age_robot,set_tracker_interval,UPSTREAM
+from uav3d.upstream import age_robot,hold_commit,publish_commit,set_tracker_interval,UPSTREAM
 
 
 def test_cli_defaults():
@@ -53,6 +53,25 @@ def test_prediction_and_fallback_age_by_elapsed_time():
     before=robot.states_prediction.copy()
     age_robot(robot,.3,.1)
     np.testing.assert_array_equal(robot.states_prediction,before)
+
+
+def test_backup_commit_is_visible_only_after_delivery():
+    """BACKUP_SEPARATION: a commit made inside a solve stays hidden (the delivered
+    one is exposed) until its command is delivered; a failed solve changes nothing."""
+    robot=SimpleNamespace(_bk_commit=None)
+    hold_commit(robot)                         # start-up: nothing delivered yet
+    assert robot._bk_commit is None
+    robot._bk_commit=(0,"first")               # upstream commits inside the solve
+    hold_commit(robot)
+    assert robot._bk_commit is None and robot.pending_commit==(0,"first")
+    publish_commit(robot)                      # delivered and accepted
+    assert robot._bk_commit==robot.published_commit==(0,"first")
+    robot._bk_commit=(3,"second")
+    hold_commit(robot)
+    assert robot._bk_commit==(0,"first")       # not delivered yet: others see the old one
+    hold_commit(robot)                         # a failed solve: upstream keeps the commit
+    publish_commit(robot)
+    assert robot._bk_commit==(0,"first")
 
 
 def test_estimator_interval_preserves_state_and_noise_density():

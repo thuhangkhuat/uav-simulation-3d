@@ -17,7 +17,7 @@ and timing semantics, and `VALIDATION.md` for what has been validated.
 
   ```bash
   git -C motion_planning_MPC status --porcelain   # must print nothing
-  git submodule status                            # must show 188edd7… with no +/- prefix
+  git submodule status                            # must show d65d3cb… with no +/- prefix
   ```
 
 If a task seems to require changing upstream, stop and explain why to the user

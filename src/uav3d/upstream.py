@@ -233,6 +233,22 @@ def publish_prediction(robot, schedule, release):
                                                rows[:,2:],np.zeros(len(rows))])
 
 
+# Separating planes (upstream BACKUP_SEPARATION): the other UAVs keep their new
+# backup branches clear of each UAV's committed backup (`_bk_commit`), which
+# upstream commits inside the solve. Here, as for the prediction, a commit
+# becomes visible (to the others and to the UAV's own next planes) only once its
+# command is delivered and accepted: release + C_i, not when the solve starts.
+def hold_commit(robot):
+    """After a solve: keep its commit pending and expose the delivered one."""
+    robot.pending_commit = getattr(robot,"_bk_commit",None)
+    robot._bk_commit = getattr(robot,"published_commit",None)
+
+
+def publish_commit(robot):
+    """The pending commit's command was delivered and accepted: publish it."""
+    robot._bk_commit = robot.published_commit = getattr(robot,"pending_commit",None)
+
+
 def set_tracker_interval(tracker, dt):
     """Keep the upstream CV filter state, updating its F/Q for elapsed mission time."""
     q2 = float(tracker.Q[2,2]/tracker.dt**2)
